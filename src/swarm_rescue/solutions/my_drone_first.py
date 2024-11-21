@@ -2,8 +2,11 @@
 First assessment controller
 """
 import math
+from math import sqrt
 from copy import deepcopy
 from typing import Optional
+from heapq import heappush, heappop
+from random import randrange
 
 import numpy as np
 
@@ -90,21 +93,79 @@ class MyDroneFirst(DroneAbstract):
         return command, collision
 
     #TODO : Gére la localisation et la cartographie de la carte
-    def slam_update(self, sensor_data):
-        # Implémentez votre algorithme SLAM ici
-        pass
+def slam_update(self, sensor_data):
+    # Implémentez votre algorithme SLAM ici
+    pass
 
     # TODO : Exploration aléatoire lié à process_lidar_sensor
-    def exploration_logic(self, current_position, map_data):
-        # Implémentez Wall-Following ou une autre logique
-        pass
+def exploration_logic(self, current_position, map_data):
+    # Implémentez Wall-Following ou une autre logique
+    pass
 
     #TODO : Créer la fonction qui planifie le chemin sachant une collection de point accesible sur la carte
-    def plan_path(self, start, goal):
-        # Implémenter A* ici
-        pass
+    # Adam
+def distance(a, b):
+    return sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2)
+    
+# Adam
+    
+# Fonction créant le graphe à partir des points 
+def mapping(points):
+    graph = {}
+    for i in points:
+        for j in points:
+            if i != j and distance(i, j) < 10:
+                key1 = (i, j)
+                key2 = (j, i)
+                if key1 not in graph and key2 not in graph:
+                    graph[key1] = distance(i, j)
+    return graph
+
+# Fonction implémentant un algorithme de plus court chemin à l'aide du grpahe créé précédemment
+# Algo utilisé : Djikstra | à changer si couteux en complexité 
+# Adam
+
+def djikstra(start, goal, points):
+    graphe = mapping(points)
+    queue = []
+    path_distance = {start: 0}
+    path = {start: None}
+    heappush(queue, (0, start))
+
+    while queue:
+        current_distance, current_node = heappop(queue)
+
+        if current_node == goal:
+            return path
+
+        for (node1, node2), dist in graphe.items():
+            if node1 == current_node:
+                voisin = node2
+                new_distance = current_distance + dist
+                if voisin not in path_distance or new_distance < path_distance[voisin]:
+                    path_distance[voisin] = new_distance
+                    path[voisin] = current_node
+                    heappush(queue, (new_distance, voisin))
+
+    return None
+
+# Fonction pour récupérer le chemin une fois que le plus court chemin a été trouvé
+# Adam
+
+def plan_path(start, goal, points):
+    path = djikstra(start, goal, points)
+    result = []
+    if path is None:
+        return result
+    current = goal
+    while current is not None:
+        result.append(current)
+        current = path[current]
+    return result[::-1]
+
+  
 
     # TODO : Comment on va suivre le chemin avec le drone
-    def follow_path(self, path):
+def follow_path(self, path):
         # Implémenter Pure Pursuit ici
-        pass
+    pass
