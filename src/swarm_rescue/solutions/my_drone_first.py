@@ -13,6 +13,12 @@ import numpy as np
 from spg_overlay.entities.drone_abstract import DroneAbstract
 from spg_overlay.utils.misc_data import MiscData
 from spg_overlay.utils.utils import normalize_angle, sign
+from spg_overlay.entities.wounded_person import WoundedPerson
+
+from drone_modules.slam_module import SLAMModule
+from drone_modules.exploration import Exploration
+from drone_modules.path_planner import PathPlanner
+from drone_modules.path_tracker import PathTracker
 
 class MyDroneFirst(DroneAbstract):
     def __init__(self,
@@ -23,6 +29,12 @@ class MyDroneFirst(DroneAbstract):
                          misc_data=misc_data,
                          display_lidar_graph=False,
                          **kwargs)
+
+    # Modules
+    slam = SLAMModule()
+    exploration = Exploration(slam)
+    path_planner = PathPlanner()
+    path_tracker = PathTracker()
 
     def control(self): # BOUCLE PRINCIPALE
         """
@@ -92,12 +104,24 @@ class MyDroneFirst(DroneAbstract):
 
         return command, collision
 
+    def process_lidar_sensor_wounded(self, the_lidar_sensor):
+        if self.communicator:
+            for msg in self.communicator.received_messages:
+                sender_id, content = msg
+                if isinstance(content, WoundedPerson):
+                    # Envoyer un message à la personne blessée pour qu'elle suive le drone
+                    self.communicator.send_message_to(content, {
+                        "position": self.measured_gps_position(),
+                        "angle": self.measured_compass_angle()
+                    })
+        return None
+
     #TODO : Gére la localisation et la cartographie de la carte
 def slam_update(self, sensor_data):
     # Implémentez votre algorithme SLAM ici
     pass
 
-    # TODO : Exploration aléatoire lié à process_lidar_sensor
+    # TODO : Exploration aléatoire lié à process_lidar_sensor met
 def exploration_logic(self, current_position, map_data):
     # Implémentez Wall-Following ou une autre logique
     pass

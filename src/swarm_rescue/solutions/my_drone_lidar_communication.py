@@ -7,6 +7,7 @@ import numpy as np
 from spg_overlay.entities.drone_abstract import DroneAbstract
 from spg_overlay.utils.misc_data import MiscData
 from spg_overlay.utils.utils import normalize_angle, sign
+from spg_overlay.entities.wounded_person import WoundedPerson
 
 
 class MyDroneLidarCommunication(DroneAbstract):
@@ -37,10 +38,14 @@ class MyDroneLidarCommunication(DroneAbstract):
         """
         command = {"forward": 0.0,
                    "lateral": 0.0,
-                   "rotation": 0.0}
+                   "rotation": 0.0,
+                   "grasper":0 }
 
         command_lidar, collision_lidar = self.process_lidar_sensor(self.lidar())
         found, command_comm = self.process_communication_sensor()
+
+        #self.grasped_wounded()
+
 
         alpha = 0.4
         alpha_rot = 0.75
@@ -115,6 +120,7 @@ class MyDroneLidarCommunication(DroneAbstract):
 
     def process_communication_sensor(self):
         found_drone = False
+
         command_comm = {"forward": 0.0,
                         "lateral": 0.0,
                         "rotation": 0.0}
@@ -225,3 +231,25 @@ class MyDroneLidarCommunication(DroneAbstract):
                 command_comm["lateral"] = 0.5 * (lat1 + lat2)
 
         return found_drone, command_comm
+
+    def grasped_wounded(self):
+        """
+        Cette fonction utilise le capteur sémantique pour détecter une personne blessée
+        et tente de la saisir si elle est dans la portée de saisie du drone.
+        """
+        # Vérifier si le drone a déjà saisi une entité
+        grasped_entities = self.grasped_entities()
+
+        # Si le drone n'a rien saisi, il peut essayer de saisir une personne blessée
+        if len(grasped_entities) == 0:
+            # Récupérer les valeurs du capteur sémantique
+            semantic_data = self.semantic_values()
+
+            # Si des données sont retournées par le capteur sémantique
+            if semantic_data is not None:
+                print(semantic_data)
+
+                # Vérifier si l'entité détectée est une "WoundedPerson"
+                 #if entity_type == "TypeEntity.WOUNDED_PERSON":
+                        # Le drone saisit la personne blessée si elle est dans la portée
+                        #self.base.grasper.grasp(self)  # Cela saisit la personne blessée
