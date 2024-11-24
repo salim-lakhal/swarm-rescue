@@ -24,6 +24,8 @@ from spg_overlay.gui_map.gui_sr import GuiSR
 from spg_overlay.utils.utils import normalize_angle, circular_mean
 from maps.map_intermediate_01 import MyMapIntermediate01
 from collections import deque
+
+
     
 class OccupancyGrid(Grid):
     """Simple occupancy grid"""
