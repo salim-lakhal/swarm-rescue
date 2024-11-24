@@ -12,9 +12,11 @@ class Exploration:
     def __init__(self, slam):
         self.slam = slam  # Utilise les données de la carte SLAM
 
-    def compute_next_move(self, position):
+    def compute_next_move(self, the_lidar_sensor):
         """
         Calcule le prochain mouvement basé sur la logique d'exploration.
         """
+
+        
         # Implémentez Wall-Following ou une autre stratégie
         return {"forward": 1.0, "lateral": 0.0, "rotation": 0.5}

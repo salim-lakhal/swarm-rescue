@@ -1,38 +1,17 @@
-"""
-First assessment controller
-"""
 import math
-from math import sqrt
 from copy import deepcopy
 from typing import Optional
-from heapq import heappush, heappop
-from random import randrange
-from enum import Enum
 
 import numpy as np
 
 from spg_overlay.entities.drone_abstract import DroneAbstract
 from spg_overlay.entities.drone_distance_sensors import DroneSemanticSensor
-from spg_overlay.utils.utils import normalize_angle, circular_mean
 from spg_overlay.utils.misc_data import MiscData
 from spg_overlay.utils.utils import normalize_angle, sign
 from spg_overlay.entities.wounded_person import WoundedPerson
 
-from drone_modules.slam_module import SLAMModule
-from drone_modules.exploration import Exploration
-#from drone_modules.path_planner import PathPlanner
-from drone_modules.path_tracker import PathTracker
 
-class MyDroneFirst(DroneAbstract):
-    class Activity(Enum):
-        """
-        All the states of the drone as a state machine
-        """
-        SEARCHING_WOUNDED = 1
-        GRASPING_WOUNDED = 2
-        SEARCHING_RESCUE_CENTER = 3
-        DROPPING_AT_RESCUE_CENTER = 4
-
+class MyDroneLidarCommunication(DroneAbstract):
     def __init__(self,
                  identifier: Optional[int] = None,
                  misc_data: Optional[MiscData] = None,
@@ -41,52 +20,61 @@ class MyDroneFirst(DroneAbstract):
                          misc_data=misc_data,
                          display_lidar_graph=False,
                          **kwargs)
-        
-        self.state = self.Activity.SEARCHING_WOUNDED
 
+    def define_message_for_all(self):
         """
-        # Modules
-        slam = SLAMModule()
-        exploration = Exploration(slam)
-        path_planner = PathPlanner()
-        path_tracker = PathTracker()"""
+        Define the message, the drone will send to and receive from other surrounding drones.
+        """
+        msg_data = (self.identifier,
+                    (self.measured_gps_position(), self.measured_compass_angle()))
+        return msg_data
 
-    def control(self): # BOUCLE PRINCIPALE
+    def control(self):
         """
-        In this example, we only use the sensors sensor
+        In this example, we only use the sensors sensor and the communication to move the drone
         The idea is to make the drones move like a school of fish.
         The sensors will help avoid running into walls.
+        The communication will allow to know the position of the drones in the vicinity, to then correct its own
+        position to stay at a certain distance and have the same orientation.
         """
         command = {"forward": 0.0,
                    "lateral": 0.0,
                    "rotation": 0.0,
-                   "grasper":0}
+                   "grasper":0 }
 
-        found_wounded, found_rescue_center, command_semantic = (self.process_semantic_sensor()) #command_semantic à ignorer
-        
-        self.uptade_state(found_wounded,found_rescue_center)
+        command_lidar, collision_lidar = self.process_lidar_sensor(self.lidar())
+        found, command_comm = self.process_communication_sensor()
 
-        ##########
-        # COMMANDS FOR EACH STATE
-        # Searching randomly, but when a rescue center or wounded person is
-        # detected, we use a special command
-        ##########
-        if self.state is self.Activity.SEARCHING_WOUNDED:
-            command = self.update_command_search(command)
-            command["grasper"] = 0
-        elif self.state is self.Activity.GRASPING_WOUNDED:
-            command =  command_semantic # Modifier
-            command["grasper"] = 1
-        elif self.state is self.Activity.SEARCHING_RESCUE_CENTER:
-            command = self.update_command_search(command) # Modifier
-            command["grasper"] = 1
-        elif self.state is self.Activity.DROPPING_AT_RESCUE_CENTER:
-            command = command_semantic # Modifier
-            command["grasper"] = 1 # à vérifier
-        
+        print(self.semantic_values())
+
+        # Tenter d'attraper une personne blessée si elle est détectée
+        if self.attempt_grasp():
+            command["grasper"] = 1  # Active le mécanisme de saisie
+        else:
+            command["grasper"] = 0  # Désactive le mécanisme si rien n'est à saisir
+
+
+
+        alpha = 0.4
+        alpha_rot = 0.75
+
+        if collision_lidar:
+            alpha_rot = 0.1
+
+        # The final command  is a combination of 2 commands
+        command["forward"] = \
+            alpha * command_comm["forward"] \
+            + (1 - alpha) * command_lidar["forward"]
+        command["lateral"] = \
+            alpha * command_comm["lateral"] \
+            + (1 - alpha) * command_lidar["lateral"]
+        command["rotation"] = \
+            alpha_rot * command_comm["rotation"] \
+            + (1 - alpha_rot) * command_lidar["rotation"]
+
         return command
-
-    def process_lidar_sensor(self, the_lidar_sensor): #Gére les données du LIDAR à MODIFIER c'est un exemple
+    
+    def process_lidar_sensor(self, the_lidar_sensor):
         command = {"forward": 1.0,
                    "lateral": 0.0,
                    "rotation": 0.0}
@@ -137,14 +125,6 @@ class MyDroneFirst(DroneAbstract):
                 command["rotation"] = angular_vel_controller
 
         return command, collision
-
-    def define_message_for_all(self):
-        """
-        Define the message, the drone will send to and receive from other surrounding drones.
-        """
-        msg_data = (self.identifier,
-                    (self.measured_gps_position(), self.measured_compass_angle()))
-        return msg_data
 
     def process_communication_sensor(self):
         found_drone = False
@@ -259,12 +239,34 @@ class MyDroneFirst(DroneAbstract):
                 command_comm["lateral"] = 0.5 * (lat1 + lat2)
 
         return found_drone, command_comm
-        
-    def uptade_state(self,found_wounded,found_rescue_center):
-                
-        #############
-        # TRANSITIONS OF THE STATE MACHINE
-        #############
+
+    def attempt_grasp(self):
+        """
+        Vérifie si une personne blessée est à portée et tente de l'attraper.
+        """
+        # Vérifier si le capteur sémantique est disponible
+        if self.semantic_values() is None:
+            return False
+
+        # Récupérer les entités détectées par le capteur sémantique
+        for data in self.semantic_values():
+            # Vérifier si l'entité détectée est une personne blessée non saisie
+            if data.entity_type == DroneSemanticSensor.TypeEntity.WOUNDED_PERSON : #and not data.grasped:
+                # Activer le grasper pour attraper la personne blessée
+                self.base.grasper.grasp(self)  # Effectuer la saisie
+                print(f"Drone {self.identifier} a attrapé une personne blessée.")
+                return True
+
+        # Aucune personne blessée n'est à portée
+        return False
+
+    
+    
+    
+    
+    
+    
+    def uptade_state(self):
 
         if self.state is self.Activity.SEARCHING_WOUNDED and found_wounded:
             self.state = self.Activity.GRASPING_WOUNDED
@@ -290,161 +292,25 @@ class MyDroneFirst(DroneAbstract):
             self.state = self.Activity.SEARCHING_RESCUE_CENTER
         
         return None
-
-    def update_command_search(self,command):
-        command_lidar, collision_lidar = self.process_lidar_sensor(self.lidar())
-        found, command_comm = self.process_communication_sensor()
-
-        alpha = 0.4
-        alpha_rot = 0.75
-        if collision_lidar:
-            alpha_rot = 0.1
-
-        # The final command  is a combination of 2 commands
-        command["forward"] = \
-            alpha * command_comm["forward"] \
-            + (1 - alpha) * command_lidar["forward"]
-        command["lateral"] = \
-            alpha * command_comm["lateral"] \
-            + (1 - alpha) * command_lidar["lateral"]
-        command["rotation"] = \
-            alpha_rot * command_comm["rotation"] \
-            + (1 - alpha_rot) * command_lidar["rotation"]
-        
-        return command
-
-    def process_semantic_sensor(self):
-        """
-        According to his state in the state machine, the Drone will move
-        towards a wound person or the rescue center
-        """
-        command = {"forward": 0.5,
-                   "lateral": 0.0,
-                   "rotation": 0.0}
-        angular_vel_controller_max = 1.0
-
-        detection_semantic = self.semantic_values()
-        best_angle = 0
-
-        found_wounded = False
-        if (self.state is self.Activity.SEARCHING_WOUNDED
-            or self.state is self.Activity.GRASPING_WOUNDED) \
-                and detection_semantic is not None:
-            scores = []
-            for data in detection_semantic:
-                # If the wounded person detected is held by nobody
-                if (data.entity_type ==
-                        DroneSemanticSensor.TypeEntity.WOUNDED_PERSON and
-                        not data.grasped):
-                    found_wounded = True
-                    v = (data.angle * data.angle) + \
-                        (data.distance * data.distance / 10 ** 5)
-                    scores.append((v, data.angle, data.distance))
-
-            # Select the best one among wounded persons detected
-            best_score = 10000
-            for score in scores:
-                if score[0] < best_score:
-                    best_score = score[0]
-                    best_angle = score[1]
-
-        found_rescue_center = False
-        is_near = False
-        angles_list = []
-        if (self.state is self.Activity.SEARCHING_RESCUE_CENTER
-            or self.state is self.Activity.DROPPING_AT_RESCUE_CENTER) \
-                and detection_semantic:
-            for data in detection_semantic:
-                if (data.entity_type ==
-                        DroneSemanticSensor.TypeEntity.RESCUE_CENTER):
-                    found_rescue_center = True
-                    angles_list.append(data.angle)
-                    is_near = (data.distance < 30)
-
-            if found_rescue_center:
-                best_angle = circular_mean(np.array(angles_list))
-
-        # Gére le déplacement aprés avoir trouvée la personne à ignorer
-        if found_rescue_center or found_wounded:
-            # simple P controller
-            # The robot will turn until best_angle is 0
-            kp = 2.0
-            a = kp * best_angle
-            a = min(a, 1.0)
-            a = max(a, -1.0)
-            command["rotation"] = a * angular_vel_controller_max
-
-            # reduce speed if we need to turn a lot
-            if abs(a) == 1:
-                command["forward"] = 0.2
-
-        if found_rescue_center and is_near:
-            command["forward"] = 0.0
-            command["rotation"] = -1.0
-
-        return found_wounded, found_rescue_center, command
     
-    #TODO : Gére la localisation et la cartographie de la carte
-    def slam_update(self, sensor_data):
-        # Implémentez votre algorithme SLAM ici
-        pass
+    def grasped_wounded(self):
+        """
+        Cette fonction utilise le capteur sémantique pour détecter une personne blessée
+        et tente de la saisir si elle est dans la portée de saisie du drone.
+        """
+        # Vérifier si le drone a déjà saisi une entité
+        grasped_entities = self.grasped_entities()
 
-        # TODO : Exploration aléatoire lié à process_lidar_sensor met
-    def exploration_logic(self, current_position, map_data):
-        # Implémentez Wall-Following ou une autre logique
-        pass
+        # Si le drone n'a rien saisi, il peut essayer de saisir une personne blessée
+        if len(grasped_entities) == 0:
+            # Récupérer les valeurs du capteur sémantique
+            semantic_data = self.semantic_values()
 
-        #TODO : Créer la fonction qui planifie le chemin sachant une collection de point accesible sur la carte
-        # Adam
-    def distance(a, b):
-        return sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2)
-    def mapping(points):
-        graph = {}
-        for i in points:
-            for j in points:
-                if i != j and distance(i, j) < 10:
-                    key1 = (i, j)
-                    key2 = (j, i)
-                    if key1 not in graph and key2 not in graph:
-                        graph[key1] = distance(i, j)
-        return graph
-    def djikstra(start, goal, points):
-        graphe = mapping(points)
-        queue = []
-        path_distance = {start: 0}
-        path = {start: None}
-        heappush(queue, (0, start))
+            # Si des données sont retournées par le capteur sémantique
+            if semantic_data is not None:
+                print(semantic_data)
 
-        while queue:
-            current_distance, current_node = heappop(queue)
-
-            if current_node == goal:
-                return path
-
-            for (node1, node2), dist in graphe.items():
-                if node1 == current_node:
-                    voisin = node2
-                    new_distance = current_distance + dist
-                    if voisin not in path_distance or new_distance < path_distance[voisin]:
-                        path_distance[voisin] = new_distance
-                        path[voisin] = current_node
-                        heappush(queue, (new_distance, voisin))
-
-        return None
-    def plan_path(start, goal, points):
-        path = djikstra(start, goal, points)
-        result = []
-        if path is None:
-            return result
-        current = goal
-        while current is not None:
-            result.append(current)
-            current = path[current]
-        return result[::-1]
-
-    
-
-        # TODO : Comment on va suivre le chemin avec le drone
-    def follow_path(self, path):
-            # Implémenter Pure Pursuit ici
-        pass
+                # Vérifier si l'entité détectée est une "WoundedPerson"
+                 #if entity_type == "TypeEntity.WOUNDED_PERSON":
+                        # Le drone saisit la personne blessée si elle est dans la portée
+                        #self.base.grasper.grasp(self)  # Cela saisit la personne blessée

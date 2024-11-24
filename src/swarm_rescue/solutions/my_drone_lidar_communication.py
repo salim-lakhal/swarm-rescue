@@ -1,16 +1,27 @@
 import math
 from copy import deepcopy
 from typing import Optional
+from enum import Enum
 
 import numpy as np
 
 from spg_overlay.entities.drone_abstract import DroneAbstract
+from spg_overlay.entities.drone_distance_sensors import DroneSemanticSensor
 from spg_overlay.utils.misc_data import MiscData
 from spg_overlay.utils.utils import normalize_angle, sign
 from spg_overlay.entities.wounded_person import WoundedPerson
 
 
 class MyDroneLidarCommunication(DroneAbstract):
+    class Activity(Enum):
+        """
+        All the states of the drone as a state machine
+        """
+        SEARCHING_WOUNDED = 1
+        GRASPING_WOUNDED = 2
+        SEARCHING_RESCUE_CENTER = 3
+        DROPPING_AT_RESCUE_CENTER = 4
+        
     def __init__(self,
                  identifier: Optional[int] = None,
                  misc_data: Optional[MiscData] = None,
@@ -19,6 +30,12 @@ class MyDroneLidarCommunication(DroneAbstract):
                          misc_data=misc_data,
                          display_lidar_graph=False,
                          **kwargs)
+        # The state is initialized to searching wounded person
+        self.state = self.Activity.SEARCHING_WOUNDED
+        command = {"forward": 0.0,
+            "lateral": 0.0,
+            "rotation": 0.0,
+            "grasper":0 }
 
     def define_message_for_all(self):
         """
@@ -44,25 +61,26 @@ class MyDroneLidarCommunication(DroneAbstract):
         command_lidar, collision_lidar = self.process_lidar_sensor(self.lidar())
         found, command_comm = self.process_communication_sensor()
 
-        #self.grasped_wounded()
+        detection_semantic = self.semantic_values()
 
 
-        alpha = 0.4
-        alpha_rot = 0.75
+        if self.state is self.Activity.SEARCHING_WOUNDED:
+            alpha = 0.4
+            alpha_rot = 0.75
+            if collision_lidar:
+                alpha_rot = 0.1
 
-        if collision_lidar:
-            alpha_rot = 0.1
-
-        # The final command  is a combination of 2 commands
-        command["forward"] = \
-            alpha * command_comm["forward"] \
-            + (1 - alpha) * command_lidar["forward"]
-        command["lateral"] = \
-            alpha * command_comm["lateral"] \
-            + (1 - alpha) * command_lidar["lateral"]
-        command["rotation"] = \
-            alpha_rot * command_comm["rotation"] \
-            + (1 - alpha_rot) * command_lidar["rotation"]
+            # The final command  is a combination of 2 commands
+            command["forward"] = \
+                alpha * command_comm["forward"] \
+                + (1 - alpha) * command_lidar["forward"]
+            command["lateral"] = \
+                alpha * command_comm["lateral"] \
+                + (1 - alpha) * command_lidar["lateral"]
+            command["rotation"] = \
+                alpha_rot * command_comm["rotation"] \
+                + (1 - alpha_rot) * command_lidar["rotation"]
+            command["grasper"] = 0
 
         return command
 
@@ -231,6 +249,74 @@ class MyDroneLidarCommunication(DroneAbstract):
                 command_comm["lateral"] = 0.5 * (lat1 + lat2)
 
         return found_drone, command_comm
+
+    def attempt_grasp(self):
+        """
+        Vérifie si une personne blessée est à portée et tente de l'attraper.
+        """
+        # Vérifier si le capteur sémantique est disponible
+        if self.semantic_values() is None:
+            return False
+
+        # Récupérer les entités détectées par le capteur sémantique
+        for data in self.semantic_values():
+            # Vérifier si l'entité détectée est une personne blessée non saisie
+            if data.entity_type == DroneSemanticSensor.TypeEntity.WOUNDED_PERSON : #and not data.grasped:
+                # Activer le grasper pour attraper la personne blessée
+                self.base.grasper.grasp(self)  # Effectuer la saisie
+                print(f"Drone {self.identifier} a attrapé une personne blessée.")
+                return True
+
+        # Aucune personne blessée n'est à portée
+        return False
+
+    def uptade_state(self,found_wounded,found_rescue_center):
+
+
+        if self.state is self.Activity.SEARCHING_WOUNDED and found_wounded:
+            self.state = self.Activity.GRASPING_WOUNDED
+
+        elif (self.state is self.Activity.GRASPING_WOUNDED and
+              self.base.grasper.grasped_entities):
+            self.state = self.Activity.SEARCHING_RESCUE_CENTER
+
+        elif (self.state is self.Activity.GRASPING_WOUNDED and
+              not found_wounded):
+            self.state = self.Activity.SEARCHING_WOUNDED
+
+        elif (self.state is self.Activity.SEARCHING_RESCUE_CENTER and
+              found_rescue_center):
+            self.state = self.Activity.DROPPING_AT_RESCUE_CENTER
+
+        elif (self.state is self.Activity.DROPPING_AT_RESCUE_CENTER and
+              not self.base.grasper.grasped_entities):
+            self.state = self.Activity.SEARCHING_WOUNDED
+
+        elif (self.state is self.Activity.DROPPING_AT_RESCUE_CENTER and
+              not found_rescue_center):
+            self.state = self.Activity.SEARCHING_RESCUE_CENTER
+        
+        return None
+    
+    def uptade_search_position(self):
+        command_lidar, collision_lidar = self.process_lidar_sensor(self.lidar())
+        found, command_comm = self.process_communication_sensor()
+
+        alpha = 0.4
+        alpha_rot = 0.75
+        if collision_lidar:
+            alpha_rot = 0.1
+
+        # The final command  is a combination of 2 commands
+        self.command["forward"] = \
+            alpha * command_comm["forward"] \
+            + (1 - alpha) * command_lidar["forward"]
+        self.command["lateral"] = \
+            alpha * command_comm["lateral"] \
+            + (1 - alpha) * command_lidar["lateral"]
+        self.command["rotation"] = \
+            alpha_rot * command_comm["rotation"] \
+            + (1 - alpha_rot) * command_lidar["rotation"]
 
     def grasped_wounded(self):
         """
