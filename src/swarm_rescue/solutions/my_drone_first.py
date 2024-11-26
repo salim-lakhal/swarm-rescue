@@ -19,7 +19,7 @@ from spg_overlay.utils.utils import normalize_angle, sign
 from spg_overlay.entities.wounded_person import WoundedPerson
 
 from drone_modules.slam_module import SLAMModule
-from drone_modules.exploration import Exploration
+from drone_modules.exploration_grid import ExplorationGrid
 #from drone_modules.path_planner import PathPlanner
 from drone_modules.path_tracker import PathTracker
 
@@ -44,12 +44,10 @@ class MyDroneFirst(DroneAbstract):
         
         self.state = self.Activity.SEARCHING_WOUNDED
 
-        """
         # Modules
-        slam = SLAMModule()
-        exploration = Exploration(slam)
-        path_planner = PathPlanner()
-        path_tracker = PathTracker()"""
+        self.slam = SLAMModule()
+        self.explorationGrid = ExplorationGrid(drone=self)
+
 
     def control(self): # BOUCLE PRINCIPALE
         """
@@ -64,21 +62,21 @@ class MyDroneFirst(DroneAbstract):
 
         found_wounded, found_rescue_center, command_semantic = (self.process_semantic_sensor()) #command_semantic à ignorer
         
+        # Transitions de la machine à états
         self.uptade_state(found_wounded,found_rescue_center)
 
-        ##########
-        # COMMANDS FOR EACH STATE
-        # Searching randomly, but when a rescue center or wounded person is
-        # detected, we use a special command
-        ##########
+        lidar_data = self.lidar().get_sensor_values()
+
+
+        # Commandes selon l'état
         if self.state is self.Activity.SEARCHING_WOUNDED:
-            command = self.update_command_search(command)
+            command = self.explorationGrid.control()
             command["grasper"] = 0
         elif self.state is self.Activity.GRASPING_WOUNDED:
             command =  command_semantic # Modifier
             command["grasper"] = 1
         elif self.state is self.Activity.SEARCHING_RESCUE_CENTER:
-            command = self.update_command_search(command) # Modifier
+            command = self.explorationGrid.control() # Modifier
             command["grasper"] = 1
         elif self.state is self.Activity.DROPPING_AT_RESCUE_CENTER:
             command = command_semantic # Modifier

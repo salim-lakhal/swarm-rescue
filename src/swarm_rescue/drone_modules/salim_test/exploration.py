@@ -16,7 +16,7 @@ class Exploration:
         self.following_wall = False  # Indique si le drone suit un mur
         self.direction = 1  # 1 pour sens horaire, -1 pour anti-horaire
 
-    def compute_next_move(self, position, lidar_data):
+    def compute_next_move(self, lidar_data): #position
         """
         Calcule le prochain mouvement basé sur la logique de Wall-Following.
 

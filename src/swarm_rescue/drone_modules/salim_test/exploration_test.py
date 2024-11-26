@@ -269,6 +269,7 @@ class MyDroneSemantic(DroneAbstract):
             else:
                 command["forward"] = 0.5
 
+        
         found_wounded, found_rescue_center, command_semantic = self.process_semantic_sensor()
 
         # Transitions de la machine à états
@@ -298,6 +299,8 @@ class MyDroneSemantic(DroneAbstract):
         elif self.state is self.Activity.DROPPING_AT_RESCUE_CENTER:
             command = command_semantic
             command["grasper"] = 1
+        
+        command = self.control_exploration()
 
         return command
 
