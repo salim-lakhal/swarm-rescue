@@ -7,6 +7,7 @@ __pycache__
 *.profile
 *.calltree
 swarm_rescue.egg-info
+../ompl
 
 # Temporary and binary files
 *~
@@ -32,6 +33,7 @@ __pycache__/*
 .idea
 .vscode
 tags
+
 
 # Package files
 *.egg

@@ -5,8 +5,8 @@ from typing import Optional
 from heapq import heappush, heappop
 from random import randrange
 import random
-#import ompl.src.ompl.base as ob
-#import ompl.src.ompl.geometric as og
+import ompl.src.ompl.base as ob
+import ompl.src.ompl.geometric as og
 import numpy as np
 from examples import example_mapping
 from examples import example_return_area
