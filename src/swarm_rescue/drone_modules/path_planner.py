@@ -5,8 +5,8 @@ from typing import Optional
 from heapq import heappush, heappop
 from random import randrange
 import random
-import ompl.src.ompl.base as ob
-import ompl.src.ompl.geometric as og
+#import ompl.src.ompl.base as ob
+#import ompl.src.ompl.geometric as og
 import numpy as np
 from examples import example_mapping
 from examples import example_return_area
@@ -15,9 +15,9 @@ from drone_modules import occupancy_grid
 # TODO : Utiliser OMPL se rendre d'un point A à B connaissant les collisions
 # Solution provisoire : Djikstra
 class PathPlanner:
-    def __init__(self,map,position,return_area):
+    def __init__(self,map,drone,return_area):
         self.map = map # Nuage de points
-        self.position = position # Position du drone
+        self.drone = drone # Position du drone
         self.return_area = return_area # Aire de retour 
         pass
     
@@ -39,9 +39,9 @@ class PathPlanner:
         """Algorithme de Dijkstra pour trouver le chemin le plus court."""
         graphe = self.mapping()
         queue = []
-        path_distance = {self.position: 0}
-        path = {self.position: None}
-        heappush(queue, (0, self.position))
+        path_distance = {self.drone.measured_gps_position(): 0}
+        path = {self.drone.measured_gps_position(): None}
+        heappush(queue, (0, self.drone.measured_gps_position()))
 
         while queue:
             current_distance, current_node = heappop(queue)

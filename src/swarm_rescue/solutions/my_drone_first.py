@@ -20,7 +20,7 @@ from spg_overlay.entities.wounded_person import WoundedPerson
 
 from drone_modules.slam_module import SLAMModule
 from drone_modules.exploration_grid import ExplorationGrid
-#from drone_modules.path_planner import PathPlanner
+from drone_modules.path_planner import PathPlanner
 from drone_modules.path_tracker import PathTracker
 
 class MyDroneFirst(DroneAbstract):
@@ -47,6 +47,7 @@ class MyDroneFirst(DroneAbstract):
         # Modules
         self.slam = SLAMModule()
         self.explorationGrid = ExplorationGrid(drone=self)
+        self.path_planner = PathPlanner(map=self.explorationGrid.grid,drone=self,return_area=self.measured_gps_position())
 
 
     def control(self): # BOUCLE PRINCIPALE
@@ -64,9 +65,6 @@ class MyDroneFirst(DroneAbstract):
         
         # Transitions de la machine à états
         self.uptade_state(found_wounded,found_rescue_center)
-
-        lidar_data = self.lidar().get_sensor_values()
-
 
         # Commandes selon l'état
         if self.state is self.Activity.SEARCHING_WOUNDED:
@@ -381,68 +379,3 @@ class MyDroneFirst(DroneAbstract):
             command["rotation"] = -1.0
 
         return found_wounded, found_rescue_center, command
-    
-    #TODO : Gére la localisation et la cartographie de la carte
-    def slam_update(self, sensor_data):
-        # Implémentez votre algorithme SLAM ici
-        pass
-
-        # TODO : Exploration aléatoire lié à process_lidar_sensor met
-    def exploration_logic(self, current_position, map_data):
-        # Implémentez Wall-Following ou une autre logique
-        pass
-
-        #TODO : Créer la fonction qui planifie le chemin sachant une collection de point accesible sur la carte
-        # Adam
-    def distance(a, b):
-        return sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2)
-    def mapping(points):
-        graph = {}
-        for i in points:
-            for j in points:
-                if i != j and distance(i, j) < 10:
-                    key1 = (i, j)
-                    key2 = (j, i)
-                    if key1 not in graph and key2 not in graph:
-                        graph[key1] = distance(i, j)
-        return graph
-    def djikstra(start, goal, points):
-        graphe = mapping(points)
-        queue = []
-        path_distance = {start: 0}
-        path = {start: None}
-        heappush(queue, (0, start))
-
-        while queue:
-            current_distance, current_node = heappop(queue)
-
-            if current_node == goal:
-                return path
-
-            for (node1, node2), dist in graphe.items():
-                if node1 == current_node:
-                    voisin = node2
-                    new_distance = current_distance + dist
-                    if voisin not in path_distance or new_distance < path_distance[voisin]:
-                        path_distance[voisin] = new_distance
-                        path[voisin] = current_node
-                        heappush(queue, (new_distance, voisin))
-
-        return None
-    def plan_path(start, goal, points):
-        path = djikstra(start, goal, points)
-        result = []
-        if path is None:
-            return result
-        current = goal
-        while current is not None:
-            result.append(current)
-            current = path[current]
-        return result[::-1]
-
-    
-
-        # TODO : Comment on va suivre le chemin avec le drone
-    def follow_path(self, path):
-            # Implémenter Pure Pursuit ici
-        pass
