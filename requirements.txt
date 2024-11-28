@@ -1,12 +1,19 @@
+# Packages installés à partir de dépôts Git
 -e git+https://github.com/emmanuel-battesti/simple-playgrounds.git@swarm-rescue-v3#egg=spg
 #-e git+https://github.com/ompl/ompl/tree/main/py-bindings#egg=py-bindings
 
-#-e /home/battesti/projetCompetDronesDGA/simple-playgrounds
+# Outils de test et de couverture
 coverage
-fpdf>=1.7.2
 gprof2dot
-numba>=0.58.1
-opencv-contrib-python>=4.10.0.84
-pandas>=2.0.3
-pathlib2>=2.3.7.post1
-python-statemachine>=2.3.6
+
+# Librairies spécifiques
+fpdf>=1.7.2                # Génération de fichiers PDF
+numba>=0.58.1              # Accélération avec des compilateurs JIT
+opencv-contrib-python>=4.10.0.84  # Traitement d'images
+pandas>=2.0.3              # Analyse de données
+pathlib2>=2.3.7.post1      # Gestion de chemins (backport pour Python 2, si nécessaire)
+python-statemachine>=2.3.6 # Gestion des machines à états
+
+# Notes pour les utilisateurs (sections désactivées si nécessaire)
+# -e /home/battesti/projetCompetDronesDGA/simple-playgrounds
+

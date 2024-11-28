@@ -7,7 +7,7 @@ __pycache__
 *.profile
 *.calltree
 swarm_rescue.egg-info
-../ompl
+.ompl/*
 
 # Temporary and binary files
 *~
