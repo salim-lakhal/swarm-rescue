@@ -5,12 +5,10 @@ from typing import Optional
 from heapq import heappush, heappop
 from random import randrange
 import random
-import ompl.src.ompl.base as ob
-import ompl.src.ompl.geometric as og
+#import ompl.src.ompl.base as ob
+#import ompl.src.ompl.geometric as og
 import numpy as np
-from examples import example_mapping
-from examples import example_return_area
-from drone_modules import occupancy_grid
+from solutions.drone_modules.occupancy_grid import OccupancyGrid
 
 # TODO : Utiliser OMPL se rendre d'un point A à B connaissant les collisions
 # Solution provisoire : Djikstra

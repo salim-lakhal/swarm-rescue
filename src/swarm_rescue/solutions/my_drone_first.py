@@ -45,16 +45,17 @@ class MyDroneFirst(DroneAbstract):
         self.state = self.Activity.SEARCHING_WOUNDED
 
         # Modules
-        self.slam = SLAMModule()
+        self.slam = SLAMModule() #Ignorer pas encore implémenter
         self.explorationGrid = ExplorationGrid(drone=self)
-        self.path_planner = PathPlanner(map=self.explorationGrid.grid,drone=self,return_area=self.measured_gps_position())
+        self.path_planner = PathPlanner(map=self.explorationGrid.grid,drone=self,return_area=self.measured_gps_position()) #Ignorer pas encore implémenter
 
 
     def control(self): # BOUCLE PRINCIPALE
         """
-        In this example, we only use the sensors sensor
-        The idea is to make the drones move like a school of fish.
-        The sensors will help avoid running into walls.
+        Le drone utlise une Occupancy Grid pour explorer les zones non visitée 
+        qui est inclus dans la classe ExplorationGrid qui s'occupe de l'exploration 
+        de la grille. Lorsque la personne est trouvée nous utilisons process_semantic_sensor pour retourner à la base.
+
         """
         command = {"forward": 0.0,
                    "lateral": 0.0,
@@ -71,18 +72,18 @@ class MyDroneFirst(DroneAbstract):
             command = self.explorationGrid.control()
             command["grasper"] = 0
         elif self.state is self.Activity.GRASPING_WOUNDED:
-            command =  command_semantic # Modifier
+            command =  command_semantic # A Modifier par un path planner et tracker
             command["grasper"] = 1
         elif self.state is self.Activity.SEARCHING_RESCUE_CENTER:
-            command = self.explorationGrid.control() # Modifier
+            command = self.explorationGrid.control() 
             command["grasper"] = 1
         elif self.state is self.Activity.DROPPING_AT_RESCUE_CENTER:
-            command = command_semantic # Modifier
-            command["grasper"] = 1 # à vérifier
+            command = command_semantic # A Modifier par un path_planner et tracker
+            command["grasper"] = 1
         
         return command
 
-    def process_lidar_sensor(self, the_lidar_sensor): #Gére les données du LIDAR à MODIFIER c'est un exemple
+    def process_lidar_sensor(self, the_lidar_sensor): 
         command = {"forward": 1.0,
                    "lateral": 0.0,
                    "rotation": 0.0}
@@ -134,7 +135,7 @@ class MyDroneFirst(DroneAbstract):
 
         return command, collision
 
-    def define_message_for_all(self):
+    def define_message_for_all(self):#Ignorer
         """
         Define the message, the drone will send to and receive from other surrounding drones.
         """
@@ -142,7 +143,7 @@ class MyDroneFirst(DroneAbstract):
                     (self.measured_gps_position(), self.measured_compass_angle()))
         return msg_data
 
-    def process_communication_sensor(self):
+    def process_communication_sensor(self): # Ignorer
         found_drone = False
 
         command_comm = {"forward": 0.0,
@@ -287,7 +288,7 @@ class MyDroneFirst(DroneAbstract):
         
         return None
 
-    def update_command_search(self,command):
+    def update_command_search(self,command): #Ignorer
         command_lidar, collision_lidar = self.process_lidar_sensor(self.lidar())
         found, command_comm = self.process_communication_sensor()
 

@@ -1,5 +1,5 @@
 -e git+https://github.com/emmanuel-battesti/simple-playgrounds.git@swarm-rescue-v3#egg=spg
--e git+https://github.com/ompl/ompl/tree/main/py-bindings#egg=ompl
+#-e git+https://github.com/ompl/ompl/tree/main/py-bindings#egg=py-bindings
 
 #-e /home/battesti/projetCompetDronesDGA/simple-playgrounds
 coverage

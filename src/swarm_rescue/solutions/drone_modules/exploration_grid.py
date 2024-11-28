@@ -169,20 +169,3 @@ class ExplorationGrid():
                         target_cell = (nx, ny)
 
         return target_cell
-
-def main():
-    
-    my_map = MyMapIntermediate01()
-    my_playground = my_map.construct_playground(drone_type=ExplorationGrid)
-
-    # draw_semantic_rays : enable the visualization of the semantic rays
-    gui = GuiSR(playground=my_playground,
-                the_map=my_map,
-                draw_semantic_rays=True,
-                use_keyboard=False,
-                )
-    gui.run()
-
-
-if __name__ == '__main__':
-    main()
