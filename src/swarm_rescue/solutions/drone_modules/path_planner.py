@@ -13,8 +13,8 @@ from solutions.drone_modules.occupancy_grid import OccupancyGrid
 # Utilisation d'OMPL afin d'obtenir un chemin
 
 class PathPlanner:
-    def __init__(self, occupancy_grid, resolution):
-        self.grid = occupancy_grid     # Initialise la grille avec la occupancy grid                                                                       
+    def __init__(self, grid, resolution):
+        self.grid = grid                # Initialise la grille avec la occupancy grid                                                                       
         self.resolution = resolution   # Initalise la taille d'une cellule de la grille
 
         # Initialiser l'espace d'état 2D (x, y)

@@ -22,6 +22,7 @@ from drone_modules.slam_module import SLAMModule
 from drone_modules.exploration_grid import ExplorationGrid
 from drone_modules.path_planner import PathPlanner
 from drone_modules.path_tracker import PathTracker
+from drone_modules.occupancy_grid import OccupancyGrid
 
 class MyDroneFirst(DroneAbstract):
     class Activity(Enum):
@@ -46,8 +47,10 @@ class MyDroneFirst(DroneAbstract):
 
         # Modules
         self.slam = SLAMModule() #Ignorer pas encore implémenter
-        self.explorationGrid = ExplorationGrid(drone=self)
-        self.path_planner = PathPlanner(map=self.explorationGrid.grid,drone=self,return_area=self.measured_gps_position()) #Ignorer pas encore implémenter
+        self.grid = OccupancyGrid(size_area_world=self.size_area, resolution=8,drone=self)
+        self.explorationGrid = ExplorationGrid(drone=self,grid=self.grid)
+        self.path_planner = PathPlanner(grid=self.grid,resolution=8) #Ignorer pas encore implémenter
+
 
 
     def control(self): # BOUCLE PRINCIPALE
@@ -80,6 +83,8 @@ class MyDroneFirst(DroneAbstract):
         elif self.state is self.Activity.DROPPING_AT_RESCUE_CENTER:
             command = command_semantic # A Modifier par un path_planner et tracker
             command["grasper"] = 1
+        
+        command["lateral"] = 1
         
         return command
 

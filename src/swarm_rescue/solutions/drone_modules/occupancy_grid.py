@@ -10,14 +10,14 @@ class OccupancyGrid(Grid):
     def __init__(self,
                  size_area_world,
                  resolution: float,
-                 lidar):
+                 drone):
         super().__init__(size_area_world=size_area_world,
                          resolution=resolution)
 
         self.size_area_world = size_area_world
         self.resolution = resolution
 
-        self.lidar = lidar
+        self.drone = drone
 
         self.x_max_grid: int = int(self.size_area_world[0] / self.resolution
                                    + 0.5)
@@ -63,8 +63,8 @@ class OccupancyGrid(Grid):
         THRESHOLD_MIN = -40
         THRESHOLD_MAX = 40
 
-        lidar_dist = self.lidar.get_sensor_values()[::EVERY_N].copy()
-        lidar_angles = self.lidar.ray_angles[::EVERY_N].copy()
+        lidar_dist = self.drone.lidar_values()[::EVERY_N].copy()
+        lidar_angles = self.drone.lidar_rays_angles()[::EVERY_N].copy()
 
         # Compute cos and sin of the absolute angle of the lidar
         cos_rays = np.cos(lidar_angles + pose.orientation)

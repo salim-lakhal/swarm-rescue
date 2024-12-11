@@ -28,7 +28,7 @@ from drone_modules.occupancy_grid import OccupancyGrid
         
 class ExplorationGrid():
 
-    def __init__(self,drone,map_size=(400, 400), cell_size=40, **kwargs):
+    def __init__(self,drone,grid,map_size=(400, 400), cell_size=40, **kwargs):
 
         self.counterStraight = 0
         self.angleStopTurning = 0
@@ -41,9 +41,8 @@ class ExplorationGrid():
         self.grid_size = (map_size[0] // cell_size, map_size[1] // cell_size)
         self.exploration_grid = np.zeros(self.grid_size, dtype=int)
 
-        # Integrate the OccupancyGrid
-        self.resolution = 8  # Adjust the resolution based on your needs
-        self.grid = OccupancyGrid(size_area_world=drone.size_area, resolution=self.resolution, lidar=drone.lidar())
+        # Integrate the Grid
+        self.grid = grid
 
     def define_message_for_all(self):
         pass
