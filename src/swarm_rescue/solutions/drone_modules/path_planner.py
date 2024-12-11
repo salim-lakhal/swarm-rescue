@@ -5,90 +5,72 @@ from typing import Optional
 from heapq import heappush, heappop
 from random import randrange
 import random
-#import ompl.src.ompl.base as ob
-#import ompl.src.ompl.geometric as og
+import ompl.src.ompl.base as ob
+import ompl.src.ompl.geometric as og
 import numpy as np
 from solutions.drone_modules.occupancy_grid import OccupancyGrid
 
-# TODO : Utiliser OMPL se rendre d'un point A à B connaissant les collisions
-# Solution provisoire : Djikstra
+# Utilisation d'OMPL afin d'obtenir un chemin
+
 class PathPlanner:
-    def __init__(self,map,drone,return_area):
-        self.map = map # Nuage de points
-        self.drone = drone # Position du drone
-        self.return_area = return_area # Aire de retour 
-        pass
-    
-    def distance(self, a, b):
-        return sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2) #Calcul de la distance
+    def __init__(self, occupancy_grid, resolution):
+        self.grid = occupancy_grid     # Initialise la grille avec la occupancy grid                                                                       
+        self.resolution = resolution   # Initalise la taille d'une cellule de la grille
 
-    def mapping(self):
-        graph = {} # graphe stocké sous forme de dictionnaire | clé : couple de deux points | valeur : distance entre les deux
-        for i in self.map:
-            for j in self.map:
-                if i != j and self.distance(i, j) < 2: # Mur d'épaisseur minimal de 2 | Ainsi on évite tout les points qui dépasserait un mur
-                    key1 = (i, j)
-                    key2 = (j, i)
-                    if key1 not in graph and key2 not in graph:
-                        graph[key1] = self.distance(i, j)
-        return graph
-    
-    def djikstra(self):
-        """Algorithme de Dijkstra pour trouver le chemin le plus court."""
-        graphe = self.mapping()
-        queue = []
-        path_distance = {self.drone.measured_gps_position(): 0}
-        path = {self.drone.measured_gps_position(): None}
-        heappush(queue, (0, self.drone.measured_gps_position()))
+        # Initialiser l'espace d'état 2D (x, y)
+        space = ob.RealVectorStateSpace(2)      # Représente l'espace
+        bounds = ob.RealVectorBounds(2)         # Représente les limites 
 
-        while queue:
-            current_distance, current_node = heappop(queue)
+        # Définir les limites de l'espace en fonction de la taille de la grille
+        bounds.setLow(0)
+        bounds.setHigh(0, self.grid.x_max_grid * self.resolution)  # Limite x
+        bounds.setHigh(1, self.grid.y_max_grid * self.resolution)  # Limite y
+        space.setBounds(bounds)
 
-            if current_node in self.return_area:
-                return path
+        self.space = space                                     # Initialisation de l'espace
+        self.spaceInformation= ob.SpaceInformation(space)      # Initialisation des informations de l'espace
 
-            for (node1, node2), dist in graphe.items():
-                if node1 == current_node:
-                    voisin = node2
-                    new_distance = current_distance + dist
-                    if voisin not in path_distance or new_distance < path_distance[voisin]:
-                        path_distance[voisin] = new_distance
-                        path[voisin] = current_node
-                        heappush(queue, (new_distance, voisin))
+        # Ajouter un validateur d'état basé sur la grille d'occupation
+        self.spaceInformation.setStateValidityChecker(ob.StateValidityCheckerFn(self.is_state_valid))
 
-        return None
-    
-    def plan_path(self):
-        """On trouve tout les points pour avoir le plus court chemin entre start et goal"""
-        path = self.djikstra()
-        result = []
-        if path is None:
-            return result
-        current = self.return_area
-        while current is not None:
-            result.append(current)
-            current = path[current]
-        return result[::-1]
-    
-    def plan_path(self, start, goal, map_data): # map_data mettre dans map_data l'ensemble des collision de la premiére map meme si il est pas senser la connaitre
-        """
-        Implémente OMPL pour planifier un chemin.
-        """        
-        path = ''
-        return path
+    def is_state_valid(self, state):
+        x, y = state[0], state[1]
+        grid_x = int(x / self.resolution)
+        grid_y = int(y / self.resolution)
 
-    # Vérifie si un point est valide
-    def validState(state, map_data):
-        for obstacle in map_data:
-            if state == obstacle:
-                return False
-        return True
-    
-    #Fonctionnant retournant une liste de 10 points voisins dans un rayon de 5x5 
-    def randomPoint(point):
-        resp = []
-        for i in range(10):
-            resp.append(point[0]+random.randint(0,10)-5,point[1]+random.randint(0,10)-5)
-        return resp
-    
+        # Vérifier si les coordonnées sont dans les limites de la grille
+        if 0 <= grid_x < self.grid.x_max_grid and 0 <= grid_y < self.grid.y_max_grid:
+            return self.grid.grid[grid_x, grid_y] < 0  # Cellule libre si < 0
+        return False
+
+    def plan_path(self, start, goal):
+        # Définir les états de départ et d'arrivée
+        start_state = ob.State(self.space)
+        start_state[0], start_state[1] = start
+
+        # Liste donnant le chemin à suivre
+        waypoints = []
+
+        goal_state = ob.State(self.space)
+        goal_state[0], goal_state[1] = goal
+
+        # Définir le problème de planification
+        problem = ob.ProblemDefinition(self.spaceInformation)
+        problem.setStartAndGoalStates(start_state, goal_state)
+
+        # Planification avec RRT
+        planner = og.RRT(self.spaceInformation)
+        planner.setProblemDefinition(problem)
+        planner.setup()
+
+        # Recherche d'une solution dans un temps limite de 10 secondes
+        solved = planner.solve(10.0)
+
+        # Récupération des points afin de créer le chemin
+        if solved:
+            path = problem.getSolutionPath()
+            for state in path.getStates():
+                waypoints.append((state[0],state[1]))
+        return waypoints
+
     
