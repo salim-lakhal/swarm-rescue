@@ -185,6 +185,8 @@ We will use the *Git Bash* terminal to work on the project later.
 - To facilitate the use of the *python* command, you need to create an alias to the real location of the python.exe program: `echo "alias python='winpty python.exe'" >> ~/.bashrc`.
 - Then `source .bashrc` to activate the change.
 - If everything works, the command `python --version` should show the installed Python version, for example: `Python 3.11.9`.
+## Install this *ompl* repository
+
 
 ## Install this *swarm-rescue* repository
 
