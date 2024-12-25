@@ -186,7 +186,9 @@ We will use the *Git Bash* terminal to work on the project later.
 - Then `source .bashrc` to activate the change.
 - If everything works, the command `python --version` should show the installed Python version, for example: `Python 3.11.9`.
 ## Install this *ompl* repository
-
+```bash
+git clone https://github.com/ompl/ompl.git
+```
 
 ## Install this *swarm-rescue* repository
 
