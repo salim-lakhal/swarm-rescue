@@ -2,6 +2,7 @@
 First assessment controller
 """
 import math
+import arcade
 from math import sqrt
 from copy import deepcopy
 from typing import Optional
@@ -16,7 +17,10 @@ from spg_overlay.entities.drone_distance_sensors import DroneSemanticSensor
 from spg_overlay.utils.utils import normalize_angle, circular_mean
 from spg_overlay.utils.misc_data import MiscData
 from spg_overlay.utils.utils import normalize_angle, sign
-from spg_overlay.entities.wounded_person import WoundedPerson
+from spg_overlay.utils.timer import Timer
+from spg_overlay.utils.path import Path
+from spg_overlay.utils.pose import Pose
+from spg_overlay.entities.keyboard_controller import KeyboardController
 
 from drone_modules.slam_module import SLAMModule
 from drone_modules.exploration_grid import ExplorationGrid
@@ -33,6 +37,8 @@ class MyDroneFirst(DroneAbstract):
         GRASPING_WOUNDED = 2
         SEARCHING_RESCUE_CENTER = 3
         DROPPING_AT_RESCUE_CENTER = 4
+        FOLLOW_PATH = 5
+        INITIAL = 99
 
     def __init__(self,
                  identifier: Optional[int] = None,
@@ -43,13 +49,20 @@ class MyDroneFirst(DroneAbstract):
                          display_lidar_graph=False,
                          **kwargs)
         
-        self.state = self.Activity.SEARCHING_WOUNDED
+        self.state = self.Activity.INITIAL      #SEARCHING_WOUNDED
 
         # Modules
         self.slam = SLAMModule() #Ignorer pas encore implémenter
         self.grid = OccupancyGrid(size_area_world=self.size_area, resolution=8,drone=self)
         self.explorationGrid = ExplorationGrid(drone=self,grid=self.grid)
-        self.path_planner = PathPlanner(grid=self.grid,resolution=8) #Ignorer pas encore implémenter
+        #self.path_planner = PathPlanner(grid=self.grid,resolution=8) #Ignorer pas encore implémenter
+        self.pathTracker = PathTracker()
+        self.k = 0
+        self.keyController = KeyboardController()
+
+        self.pose = Pose()
+        self.path = Path()
+        self.timer = Timer(start_now=True)
 
 
 
@@ -60,12 +73,22 @@ class MyDroneFirst(DroneAbstract):
         de la grille. Lorsque la personne est trouvée nous utilisons process_semantic_sensor pour retourner à la base.
 
         """
+        # Calcul du temps écoulé depuis la dernière itération (FPS)
+        delta_time = self.timer.get_elapsed_time()
+        self.timer.restart()  # Redémarrage pour le prochain cycle
+
         command = {"forward": 0.0,
                    "lateral": 0.0,
                    "rotation": 0.0,
                    "grasper":0}
 
-        found_wounded, found_rescue_center, command_semantic = (self.process_semantic_sensor()) #command_semantic à ignorer
+        self.pose.position = self.true_position()
+        self.pose.orientation = self.true_angle()
+        
+        vx,vy = self.measured_velocity()
+        v_angle = self.measured_angular_velocity()
+
+        found_wounded, found_rescue_center, command_semantic = (self.process_semantic_sensor()) # command_semantic à ignorer
         
         # Transitions de la machine à états
         self.uptade_state(found_wounded,found_rescue_center)
@@ -84,9 +107,70 @@ class MyDroneFirst(DroneAbstract):
             command = command_semantic # A Modifier par un path_planner et tracker
             command["grasper"] = 1
         
-        command["lateral"] = 1
-        
+        # Etat intermédiaire pour les tests: Créer son chemin
+        if self.state is self.Activity.INITIAL:
+            command["grasper"] = 0
+            pose0 = Pose(self.true_position())
+            pose1 = Pose(np.array([295,50,-np.pi/2]))
+            pose2 = Pose(np.array([230,50,-np.pi/2]))
+            pose3 = Pose(np.array([230,-100,-np.pi/2]))
+            self.path.append(pose1)
+            self.path.append(pose2)
+            self.path.append(pose3)
+            self.state = self.Activity.FOLLOW_PATH
+        elif self.state is self.Activity.FOLLOW_PATH:
+            command = self.pathTracker.control(self.pose,self.path,delta_time)
+            # Si on a finis le chemin
+            if self.pathTracker.isFinish(self.path):
+                print("finish")
+                self.path.reset()
+                self.state = self.Activity.FOLLOW_PATH # A changer
         return command
+    
+    def draw_bottom_layer(self):
+        #self.draw_setpoint()
+        self.draw_path(path=self.path, color=(255, 0, 255))
+        #self.draw_antedirection()
+        return None
+    
+
+    def draw_setpoint(self):
+        half_width = self._half_size_array[0]
+        half_height = self._half_size_array[1]
+        pt1 = self.position_setpoint + np.array([half_width, 0])
+        pt2 = self.position_setpoint + np.array([half_width, 2 * half_height])
+        arcade.draw_line(float(pt2[0]),
+                            float(pt2[1]),
+                            float(pt1[0]),
+                            float(pt1[1]),
+                            color=arcade.color.GRAY)
+
+    def draw_path(self, path, color: list[int, int, int]):
+        length = path.length()
+        # print(length)
+        pt2 = None
+        for ind_pt in range(length):
+            pose = path.get(ind_pt)
+            pt1 = pose.position + self._half_size_array
+            # print(ind_pt, pt1, pt2)
+            if ind_pt > 0:
+                arcade.draw_line(float(pt2[0]),
+                                 float(pt2[1]),
+                                 float(pt1[0]),
+                                 float(pt1[1]), color)
+            pt2 = pt1
+
+    def draw_antedirection(self):
+        pt1 = np.array([self.true_position()[0], self.true_position()[1]])
+        pt1 = pt1 + self._half_size_array
+        pt2 = pt1 + 150 * np.array([math.cos(self.true_angle() + np.pi / 2),
+                                    math.sin(self.true_angle() + np.pi / 2)])
+        color = (255, 64, 0)
+        arcade.draw_line(float(pt2[0]),
+                         float(pt2[1]),
+                         float(pt1[0]),
+                         float(pt1[1]),
+                         color)
 
     def process_lidar_sensor(self, the_lidar_sensor): 
         command = {"forward": 1.0,

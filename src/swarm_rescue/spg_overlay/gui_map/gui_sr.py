@@ -32,7 +32,7 @@ class GuiSR(TopDownView):
             size: Optional[Tuple[int, int]] = None,
             center: Tuple[float, float] = (0, 0),
             zoom: float = 1,
-            use_keyboard: bool = False,
+            use_keyboard: bool = False, 
             display_uid: bool = False,
             draw_transparent: bool = False,
             draw_interactive: bool = False,
@@ -342,6 +342,9 @@ class GuiSR(TopDownView):
 
         if key == arcade.key.S:
             self._draw_semantic_rays = not self._draw_semantic_rays
+        
+        if key == arcade.key.V:
+            self._enable_visu_noises = not self._enable_visu_noises
 
     def on_key_release(self, key, modifiers):
         self._keyboardController.on_key_release(key, modifiers)

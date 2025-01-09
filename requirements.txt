@@ -13,6 +13,7 @@ opencv-contrib-python>=4.10.0.84  # Traitement d'images
 pandas>=2.0.3              # Analyse de données
 pathlib2>=2.3.7.post1      # Gestion de chemins (backport pour Python 2, si nécessaire)
 python-statemachine>=2.3.6 # Gestion des machines à états
+simple-pid>=1.0.0
 
 # Notes pour les utilisateurs (sections désactivées si nécessaire)
 # -e /home/battesti/projetCompetDronesDGA/simple-playgrounds

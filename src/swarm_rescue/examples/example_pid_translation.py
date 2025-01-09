@@ -46,7 +46,7 @@ class MyDronePidTranslation(DroneAbstract):
         """
         pass
 
-    def control(self):
+    def control(self,current_pose):
         """
         The Drone will move a fix distance
         """
