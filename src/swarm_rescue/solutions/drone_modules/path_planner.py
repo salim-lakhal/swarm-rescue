@@ -4,73 +4,121 @@ from copy import deepcopy
 from typing import Optional
 from heapq import heappush, heappop
 from random import randrange
+from spg_overlay.utils.grid import Grid
+from spg_overlay.utils.pose import Pose
+from spg_overlay.utils.constants import MAX_RANGE_LIDAR_SENSOR
 import random
-import ompl.src.ompl.base as ob
-import ompl.src.ompl.geometric as og
 import numpy as np
 from solutions.drone_modules.occupancy_grid import OccupancyGrid
+from random import uniform
 
-# Utilisation d'OMPL afin d'obtenir un chemin
+class Node:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.parent = None
+        self.cost = 0  # Coût pour atteindre ce nœud
 
 class PathPlanner:
-    def __init__(self, grid, resolution):
-        self.grid = grid                # Initialise la grille avec la occupancy grid                                                                       
-        self.resolution = resolution   # Initalise la taille d'une cellule de la grille
+    def __init__(self, grid, resolution, size_area_world, drone):
+        self.size_area_world = size_area_world
+        self.resolution = resolution
+        self.drone = drone
+        self.grid = grid
+        self.x_max_grid = int(self.size_area_world[0] / self.resolution + 0.5)
+        self.y_max_grid = int(self.size_area_world[1] / self.resolution + 0.5)
+        self.obstacles = []
+        self.get_obstacles()
 
-        # Initialiser l'espace d'état 2D (x, y)
-        space = ob.RealVectorStateSpace(2)      # Représente l'espace
-        bounds = ob.RealVectorBounds(2)         # Représente les limites 
+    def get_obstacles(self):
+        obstacles = []
+        for x in range(self.x_max_grid):
+            for y in range(self.y_max_grid):
+                if self.grid[x][y] > 0:  # Supposons que self.grid est un tableau 2D
+                    obstacles.append((x, y))
+        return obstacles
 
-        # Définir les limites de l'espace en fonction de la taille de la grille
-        bounds.setLow(0)
-        bounds.setHigh(0, self.grid.x_max_grid * self.resolution)  # Limite x
-        bounds.setHigh(1, self.grid.y_max_grid * self.resolution)  # Limite y
-        space.setBounds(bounds)
 
-        self.space = space                                     # Initialisation de l'espace
-        self.spaceInformation= ob.SpaceInformation(space)      # Initialisation des informations de l'espace
-
-        # Ajouter un validateur d'état basé sur la grille d'occupation
-        self.spaceInformation.setStateValidityChecker(ob.StateValidityCheckerFn(self.is_state_valid))
-
-    def is_state_valid(self, state):
-        x, y = state[0], state[1]
-        grid_x = int(x / self.resolution)
-        grid_y = int(y / self.resolution)
-
-        # Vérifier si les coordonnées sont dans les limites de la grille
-        if 0 <= grid_x < self.grid.x_max_grid and 0 <= grid_y < self.grid.y_max_grid:
-            return self.grid.grid[grid_x, grid_y] < 0  # Cellule libre si < 0
+    def is_collision(self, x1, y1, x2, y2):
+        """Vérifie s'il existe une collision sur le segment entre deux points."""
+        x1, y1 = int(x1), int(y1)
+        x2, y2 = int(x2), int(y2)
+        for t in np.linspace(0, 1, num=100):  # Discrétisation du segment
+            x = int(x1 + t * (x2 - x1))
+            y = int(y1 + t * (y2 - y1))
+            if (x, y) in self.obstacles:
+                return True
         return False
 
-    def plan_path(self, start, goal):
-        # Définir les états de départ et d'arrivée
-        start_state = ob.State(self.space)
-        start_state[0], start_state[1] = start
+    def sample_free(self):
+        """Génère un point aléatoire libre dans la zone de la grille."""
+        while True:
+            x = uniform(0, self.x_max_grid)
+            y = uniform(0, self.y_max_grid)
+            if (int(x), int(y)) not in self.obstacles:
+                return x, y
 
-        # Liste donnant le chemin à suivre
-        waypoints = []
+    def nearest_node(self, tree, point):
+        """Trouve le nœud le plus proche d'un point donné."""
+        distances = [(node, math.hypot(node.x - point[0], node.y - point[1])) for node in tree]
+        return min(distances, key=lambda x: x[1])[0]
 
-        goal_state = ob.State(self.space)
-        goal_state[0], goal_state[1] = goal
+    def steer(self, from_node, to_point, max_step_size):
+        """Crée un nouveau nœud en direction d'un point donné avec une longueur limitée."""
+        theta = math.atan2(to_point[1] - from_node.y, to_point[0] - from_node.x)
+        dist = min(max_step_size, math.hypot(to_point[0] - from_node.x, to_point[1] - from_node.y))
+        new_x = from_node.x + dist * math.cos(theta)
+        new_y = from_node.y + dist * math.sin(theta)
+        return Node(new_x, new_y)
 
-        # Définir le problème de planification
-        problem = ob.ProblemDefinition(self.spaceInformation)
-        problem.setStartAndGoalStates(start_state, goal_state)
+    def rewire(self, tree, new_node, radius):
+        """Réorganise les parents des nœuds pour minimiser les coûts dans un rayon donné."""
+        for node in tree:
+            if math.hypot(node.x - new_node.x, node.y - new_node.y) < radius:
+                cost = new_node.cost + math.hypot(node.x - new_node.x, node.y - new_node.y)
+                if cost < node.cost and not self.is_collision(node.x, node.y, new_node.x, new_node.y):
+                    node.parent = new_node
+                    node.cost = cost
 
-        # Planification avec RRT
-        planner = og.RRT(self.spaceInformation)
-        planner.setProblemDefinition(problem)
-        planner.setup()
+    def plan(self, start, goal, max_iter=1000, max_step_size=5, radius=10):
+        """Implémente l'algorithme RRT*."""
+        start_node = Node(start[0], start[1])
+        goal_node = Node(goal[0], goal[1])
+        tree = [start_node]
 
-        # Recherche d'une solution dans un temps limite de 10 secondes
-        solved = planner.solve(10.0)
+        for _ in range(max_iter):
+            rand_point = self.sample_free()
+            nearest = self.nearest_node(tree, rand_point)
+            new_node = self.steer(nearest, rand_point, max_step_size)
 
-        # Récupération des points afin de créer le chemin
-        if solved:
-            path = problem.getSolutionPath()
-            for state in path.getStates():
-                waypoints.append((state[0],state[1]))
-        return waypoints
+            if self.is_collision(nearest.x, nearest.y, new_node.x, new_node.y):
+                continue
 
-    
+            new_node.parent = nearest
+            new_node.cost = nearest.cost + math.hypot(new_node.x - nearest.x, new_node.y - nearest.y)
+            tree.append(new_node)
+
+            self.rewire(tree, new_node, radius)
+
+            if math.hypot(new_node.x - goal_node.x, new_node.y - goal_node.y) < max_step_size:
+                goal_node.parent = new_node
+                goal_node.cost = new_node.cost + math.hypot(goal_node.x - new_node.x, goal_node.y - new_node.y)
+                tree.append(goal_node)
+                break
+
+        # Construction du chemin
+        path = []
+        node = goal_node
+        while node.parent is not None:
+            path.append((node.x, node.y))
+            node = node.parent
+        path.append((start_node.x, start_node.y))
+        path.reverse()
+        return path
+
+# Exemple d'utilisation
+# grid = np.zeros((100, 100))  # Grille vide
+# planner = PathPlanner(grid, resolution=1, size_area_world=(100, 100), drone=None)
+# path = planner.plan(start=(10, 10), goal=(90, 90))
+# print(path)
+
