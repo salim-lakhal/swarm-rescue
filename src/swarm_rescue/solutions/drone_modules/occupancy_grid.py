@@ -119,7 +119,6 @@ class OccupancyGrid(Grid):
             self.display(self.grid, pose, title="Occupancy Grid")
             self.display(self.zoomed_grid, pose, title="Zoomed Occupancy Grid")
         
-        print(self.grid)
     
     def find_obstacle(self):
 
