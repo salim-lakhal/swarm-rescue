@@ -76,6 +76,8 @@ class MyDroneFirst(DroneAbstract):
         # Calcul du temps écoulé depuis la dernière itération (FPS)
         delta_time = self.timer.get_elapsed_time()
         self.timer.restart()  # Redémarrage pour le prochain cycle
+        #self.explorationGrid.control()
+        #print(self.grid.grid)
 
         command = {"forward": 0.0,
                    "lateral": 0.0,
@@ -92,6 +94,10 @@ class MyDroneFirst(DroneAbstract):
         
         # Transitions de la machine à états
         self.uptade_state(found_wounded,found_rescue_center)
+        # Mise à jour & Affichage de l'Occupancy Grid
+        self.grid.update_grid(self.pose)
+        
+        print(self.grid.grid)
 
         # Commandes selon l'état
         if self.state is self.Activity.SEARCHING_WOUNDED:
@@ -110,10 +116,11 @@ class MyDroneFirst(DroneAbstract):
         # Etat intermédiaire pour les tests: Créer son chemin
         if self.state is self.Activity.INITIAL:
             command["grasper"] = 0
-            pose0 = Pose(self.true_position())
+            pose0 = Pose(self.true_position(),self.true_angle())
             pose1 = Pose(np.array([295,50,-np.pi/2]))
             pose2 = Pose(np.array([230,50,-np.pi/2]))
             pose3 = Pose(np.array([230,-100,-np.pi/2]))
+            self.path.append(pose0)
             self.path.append(pose1)
             self.path.append(pose2)
             self.path.append(pose3)
@@ -130,6 +137,7 @@ class MyDroneFirst(DroneAbstract):
     def draw_bottom_layer(self):
         #self.draw_setpoint()
         self.draw_path(path=self.path, color=(255, 0, 255))
+        self.draw_direction()
         #self.draw_antedirection()
         return None
     
@@ -159,6 +167,18 @@ class MyDroneFirst(DroneAbstract):
                                  float(pt1[0]),
                                  float(pt1[1]), color)
             pt2 = pt1
+    
+    def draw_direction(self):
+        pt1 = np.array([self.true_position()[0], self.true_position()[1]])
+        pt1 = pt1 + self._half_size_array
+        pt2 = pt1 + 250 * np.array([math.cos(self.true_angle()),
+                                    math.sin(self.true_angle())])
+        color = (255, 64, 0)
+        arcade.draw_line(float(pt2[0]),
+                         float(pt2[1]),
+                         float(pt1[0]),
+                         float(pt1[1]),
+                         color)
 
     def draw_antedirection(self):
         pt1 = np.array([self.true_position()[0], self.true_position()[1]])

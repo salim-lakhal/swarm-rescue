@@ -23,17 +23,18 @@ class PathTracker:
         self.pid_lateral_output_limits = (-1, 1)
 
         # PID pour l'angle de direction
-        self.pid_steering = PID(0.003, 1, 0.01, setpoint=0)
+        self.pid_steering = PID(0.003, 0, 1, setpoint=0)
         self.pid_steering.output_limits = (-1, 1)  # Limiter l'angle de rotation entre -1 et 1
 
         self.current_target_index = 0  # Indice du point cible actuel
         self.iter_path = 0
         self.path_done = Path()
         self.prev_diff_position = 0
+        self.isturnRight = True
 
     
 
-    def control(self,current_pose : Pose ,path,delta_time):
+    def control(self, current_pose : Pose ,path : Path,delta_time):
 
         """Aller d'un point A à B à l'aide d'un contrôleur PID"""
 
@@ -57,11 +58,12 @@ class PathTracker:
         error_y = target_pose.position[1] - current_pose.position[1]
         target_theta = np.arctan2(error_y,error_x)
         theta = current_pose.orientation
-        error_theta = target_theta - theta #target_pose.orientation 
+        
         
 
 
         # Calculez les erreurs dans la base B1(x1,y1) du drone
+        error_theta = target_theta - theta #target_pose.orientation
         error_x1 = np.cos(theta)*error_x + np.sin(theta)*error_y
         error_y1 = -np.sin(theta)*error_x + np.cos(theta)*error_y
 
@@ -73,23 +75,61 @@ class PathTracker:
             # Change de point
             self.current_target_index += 1
 
+
         # Update PID controllers
-        alpha_theta = self.pid_steering(error_theta,delta_time)
-        alpha_f = self.pid_forward(-error_x1, delta_time)
-        alpha_l = self.pid_lateral(-error_y1, delta_time)
+        rotation = self.pid_steering(error_theta,delta_time)
+        forward = 0
+        lateral = 0
+
+        if abs(error_theta)< 0.3:
+            rotation = 0
+            # forward = self.pid_forward(-error_x1, delta_time)
+        
+        forward = self.pid_forward(-error_x1, delta_time)
+        lateral = self.pid_lateral(-error_y1, delta_time)
 
         # Limit PID outputs to [-1, 1]
-        alpha_f = max(min(alpha_f, 1), -1)
-        alpha_l = max(min(alpha_l, 1), -1)
-        alpha_theta = max(min(alpha_theta, 1), -1)
+        forward = max(min(forward, 1), -1)
+        lateral = max(min(lateral, 1), -1)
+        rotation = max(min(rotation, 1), -1)
 
-        command = {"forward": alpha_f,
-            "lateral": alpha_l,
-            "rotation": 0.0,
+        command = {"forward": forward,
+            "lateral": lateral,
+            "rotation": 0,
             "grasper":0}
 
         return command
     
+    def purepursuit(self, current_pose : Pose ,path : Path,delta_time):
+
+        target_pose = path.get(self.current_target_index)
+        
+        # Calculez les erreurs latérales et d'orientation par rapport au point cible
+        error_x = target_pose.position[0] - current_pose.position[0]
+        error_y = target_pose.position[1] - current_pose.position[1]
+        target_theta = np.arctan2(error_y,error_x)
+        theta = current_pose.orientation
+        
+        
+
+
+        # Calculez les erreurs dans la base B1(x1,y1) du drone
+        error_theta = target_theta - theta 
+        error_x1 = np.cos(theta)*error_x + np.sin(theta)*error_y
+        error_y1 = -np.sin(theta)*error_x + np.cos(theta)*error_y
+
+        error_distance = (error_x**2 + error_y**2)**0.5
+
+
+        # Si le drone est suffisamment proche du point cible autour de 3 pixel
+        if(error_distance < 3):
+            # Change de point
+            self.current_target_index += 1
+        
+        error = np.array([error_x1,error_y1,error_theta])
+
+        return error
+
     def isFinish(self,path):
         if self.current_target_index >= path.length():
              self.current_target_index = 0

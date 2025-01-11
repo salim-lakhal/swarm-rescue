@@ -26,6 +26,7 @@ class OccupancyGrid(Grid):
 
         self.grid = np.zeros((self.x_max_grid, self.y_max_grid))
         self.zoomed_grid = np.empty((self.x_max_grid, self.y_max_grid))
+        self.iteration = 0
 
     def find_frontier(self):
         """
@@ -112,3 +113,15 @@ class OccupancyGrid(Grid):
                            int(self.size_area_world[0] * 0.5))
         self.zoomed_grid = cv2.resize(self.zoomed_grid, new_zoomed_size,
                                       interpolation=cv2.INTER_NEAREST)
+        
+        self.iteration += 1
+        if self.iteration % 5 == 0:
+            self.display(self.grid, pose, title="Occupancy Grid")
+            self.display(self.zoomed_grid, pose, title="Zoomed Occupancy Grid")
+        
+        print(self.grid)
+    
+    def find_obstacle(self):
+
+        return None
+

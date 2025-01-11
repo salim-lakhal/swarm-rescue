@@ -21,3 +21,4 @@ class Path:
 
     def reset(self):
         self._poses = np.zeros((0, 3))
+    
