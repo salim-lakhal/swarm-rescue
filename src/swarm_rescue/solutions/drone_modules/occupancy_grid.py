@@ -10,14 +10,12 @@ class OccupancyGrid(Grid):
     def __init__(self,
                  size_area_world,
                  resolution: float,
-                 drone):
+                ):
         super().__init__(size_area_world=size_area_world,
                          resolution=resolution)
 
         self.size_area_world = size_area_world
         self.resolution = resolution
-
-        self.drone = drone
 
         self.x_max_grid: int = int(self.size_area_world[0] / self.resolution
                                    + 0.5)
@@ -26,6 +24,8 @@ class OccupancyGrid(Grid):
 
         self.grid = np.zeros((self.x_max_grid, self.y_max_grid))
         self.zoomed_grid = np.empty((self.x_max_grid, self.y_max_grid))
+        self.binary_grid = np.zeros((self.x_max_grid, self.y_max_grid))
+        self.obstacles = []
         self.iteration = 0
 
     def find_frontier(self):
@@ -50,7 +50,7 @@ class OccupancyGrid(Grid):
             for pt in frontier_points
         ]
     
-    def update_grid(self, pose: Pose):
+    def update_grid(self, pose: Pose,lidar_values,lidar_rays_angles):
         """
         Bayesian map update with new observation
         lidar : lidar data
@@ -64,8 +64,8 @@ class OccupancyGrid(Grid):
         THRESHOLD_MIN = -40
         THRESHOLD_MAX = 40
 
-        lidar_dist = self.drone.lidar_values()[::EVERY_N].copy()
-        lidar_angles = self.drone.lidar_rays_angles()[::EVERY_N].copy()
+        lidar_dist = lidar_values[::EVERY_N].copy()
+        lidar_angles = lidar_rays_angles[::EVERY_N].copy()
 
         # Compute cos and sin of the absolute angle of the lidar
         cos_rays = np.cos(lidar_angles + pose.orientation)
@@ -119,8 +119,19 @@ class OccupancyGrid(Grid):
             self.display(self.grid, pose, title="Occupancy Grid")
             self.display(self.zoomed_grid, pose, title="Zoomed Occupancy Grid")
         
-    
-    def find_obstacle(self):
+    # Renvoie une liste de tuples (x,y) d'obstacle carré de taille 8 pixel
+    def get_obstacles(self):
+        obstacles = []
+        for x in range (1, self.grid.shape[0] - 1):
+            for y in range(1, self.grid.shape[1] - 1):
+                if self.grid[x, y] > 0:
+                   x_world,y_world= self._conv_grid_to_world(x,y)
+                   obstacles.append((x_world, y_world))
+        return obstacles
 
-        return None
+    def save_grid(self):
+        if self.iteration == 100:
+            with open('resultat_occupancy_grid.txt', 'w') as file:
+                for row in self.grid.T:
+                    file.write(' '.join(map(str, row)) + '\n')
 

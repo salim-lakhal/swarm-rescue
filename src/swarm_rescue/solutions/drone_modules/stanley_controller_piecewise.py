@@ -1,7 +1,7 @@
 import numpy as np
 
 from math import cos, sin, atan2
-from libs import normalise_angle
+from spg_overlay.utils.utils import normalize_angle
 
 class StanleyController:
 
@@ -57,7 +57,7 @@ class StanleyController:
 
     def calculate_yaw_term(self, target_index, yaw, pyaw):
 
-        yaw_error = normalise_angle(pyaw[target_index] - yaw)
+        yaw_error = normalize_angle(pyaw[target_index] - yaw)
 
         return yaw_error
 
@@ -73,6 +73,9 @@ class StanleyController:
 
     def calculate_yaw_rate_term(self, target_velocity, steering_angle):
 
+        if self.wheelbase == 0:
+            return 0
+
         yaw_rate_error = self.k_yaw_rate*(-target_velocity*sin(steering_angle))/self.wheelbase
 
         return yaw_rate_error
@@ -84,6 +87,9 @@ class StanleyController:
         return steering_delay_error
 
     def stanley_control(self, x, y, yaw, target_velocity, steering_angle, px, py, pyaw):
+
+        if px.size == 0:
+            return 0,0,0
 
         target_index, dx, dy, absolute_error = self.find_target_path_id(x, y, yaw, px, py)
         yaw_error = self.calculate_yaw_term(target_index, yaw, pyaw)

@@ -27,6 +27,7 @@ from drone_modules.exploration_grid import ExplorationGrid
 from drone_modules.path_planner import PathPlanner
 from drone_modules.path_tracker import PathTracker
 from drone_modules.occupancy_grid import OccupancyGrid
+from drone_modules.stanley_controller_piecewise import StanleyController
 
 class MyDroneFirst(DroneAbstract):
     class Activity(Enum):
@@ -53,11 +54,12 @@ class MyDroneFirst(DroneAbstract):
 
         # Modules
         self.slam = SLAMModule() #Ignorer pas encore implémenter
-        self.grid = OccupancyGrid(size_area_world=self.size_area, resolution=8,drone=self)
+        self.grid = OccupancyGrid(size_area_world=self.size_area, resolution=8)
         self.explorationGrid = ExplorationGrid(drone=self,grid=self.grid)
         #self.path_planner = PathPlanner(grid=self.grid,resolution=8) #Ignorer pas encore implémenter
         self.pathTracker = PathTracker()
-        self.k = 0
+        self.stanleyController = StanleyController(wheelbase=0,yaw_rate_gain=0.3,steering_damp_gain=0.1,control_gain=2.5,softening_gain=1.0)
+        self.iter = 0
         self.keyController = KeyboardController()
 
         self.pose = Pose()
@@ -76,6 +78,7 @@ class MyDroneFirst(DroneAbstract):
         # Calcul du temps écoulé depuis la dernière itération (FPS)
         delta_time = self.timer.get_elapsed_time()
         self.timer.restart()  # Redémarrage pour le prochain cycle
+        self.iter += 1
         #self.explorationGrid.control()
         #print(self.grid.grid)
 
@@ -86,6 +89,8 @@ class MyDroneFirst(DroneAbstract):
 
         self.pose.position = self.true_position()
         self.pose.orientation = self.true_angle()
+        lidar_values = self.lidar_values()
+        lidar_rays_angles = self.lidar_rays_angles()
         
         vx,vy = self.measured_velocity()
         v_angle = self.measured_angular_velocity()
@@ -95,9 +100,9 @@ class MyDroneFirst(DroneAbstract):
         # Transitions de la machine à états
         self.uptade_state(found_wounded,found_rescue_center)
         # Mise à jour & Affichage de l'Occupancy Grid
-        self.grid.update_grid(self.pose)
-        
-        print(self.grid.grid)
+        self.grid.update_grid(self.pose,lidar_values,lidar_rays_angles)
+        obstacles = self.grid.get_obstacles()
+
 
         # Commandes selon l'état
         if self.state is self.Activity.SEARCHING_WOUNDED:
@@ -120,28 +125,64 @@ class MyDroneFirst(DroneAbstract):
             pose1 = Pose(np.array([295,50,-np.pi/2]))
             pose2 = Pose(np.array([230,50,-np.pi/2]))
             pose3 = Pose(np.array([230,-100,-np.pi/2]))
+            pose4 = Pose(np.array([23,-205,-np.pi/2]))
+            pose5 = Pose(np.array([-106,203,-np.pi/2]))
+            pose6 = Pose(np.array([-250,200,-np.pi/2]))
+            pose7 = Pose(np.array([-250,-200,-np.pi/2]))
             self.path.append(pose0)
             self.path.append(pose1)
             self.path.append(pose2)
             self.path.append(pose3)
+            self.path.append(pose4)
+            self.path.append(pose5)
+            self.path.append(pose6)
+            self.path.append(pose7)
+
+            for i in range (1,self.path.length()):
+                dx = self.path._poses[i][0] - self.path._poses[i-1][0]
+                dy = self.path._poses[i][1] - self.path._poses[i-1][1]
+                self.path._poses[i][2] = np.arctan2(dx,dy)
+            
+            
             self.state = self.Activity.FOLLOW_PATH
         elif self.state is self.Activity.FOLLOW_PATH:
+            #print(self.path._poses)
+            px = self.path._poses[:,0]
+            py = self.path._poses[:,1]
+            pyaw = self.path._poses[:,2]
+            limited_steering_angle, target_index, crosstrack_error = self.stanleyController.stanley_control(x = self.pose.position[0], y = self.pose.position[1], yaw=self.pose.orientation,target_velocity=0,steering_angle=5,px=px,py=py,pyaw=pyaw)
+            
+            """print("Indice du point objectif :")
+            print("Path Controller") 
+            print(self.pathTracker.current_target_index)
+            print("StanleyController :")
+            print(target_index)
+            print("crosstrack_error")
+            print(crosstrack_error)
+            print("error_distance")
+            print(self.pathTracker.error_distance)
+            print(limited_steering_angle)"""
+
             command = self.pathTracker.control(self.pose,self.path,delta_time)
+            #command = self.pathTracker.control_with_stanley(self.pose,self.path,limited_steering_angle,target_index,crosstrack_error,delta_time)
             # Si on a finis le chemin
             if self.pathTracker.isFinish(self.path):
                 print("finish")
                 self.path.reset()
                 self.state = self.Activity.FOLLOW_PATH # A changer
+            
         return command
+    
     
     def draw_bottom_layer(self):
         #self.draw_setpoint()
         self.draw_path(path=self.path, color=(255, 0, 255))
-        self.draw_direction()
+        self.draw_coordinate_system()
+        #self.draw_obstacles()
+        #self.draw_direction()
         #self.draw_antedirection()
         return None
     
-
     def draw_setpoint(self):
         half_width = self._half_size_array[0]
         half_height = self._half_size_array[1]
@@ -191,6 +232,71 @@ class MyDroneFirst(DroneAbstract):
                          float(pt1[0]),
                          float(pt1[1]),
                          color)
+    
+    def draw_coordinate_system(self, color_axis=(0, 0, 0), color_ticks=(100, 100, 100), tick_interval=100):
+        """
+        Dessine un repère centré au milieu de la carte, avec des graduations.
+
+        :param dimensions: Dimensions de la carte (width, height) en pixels.
+        :param color_axis: Couleur des axes (RGB), par défaut noir.
+        :param color_ticks: Couleur des graduations (RGB), par défaut gris clair.
+        :param tick_interval: Distance entre les graduations (en pixels), par défaut 50.
+        """
+        width, height  = self.size_area
+        center_x = width / 2
+        center_y = height / 2
+
+        # Dessin des axes
+        arcade.draw_line(0, center_y, width, center_y, color_axis, 2)  # Axe X
+        arcade.draw_line(center_x, 0, center_x, height, color_axis, 2)  # Axe Y
+
+        # Ajout des graduations sur l'axe X
+        for x in range(0, width + 1, tick_interval):
+            x_world = x - center_x
+            arcade.draw_line(x, center_y - 5, x, center_y + 5, color_ticks, 1)  # Petite graduation
+            if x_world % (2 * tick_interval) == 0:  # Grande graduation avec label
+                arcade.draw_text(f"{int(x_world)}", x + 5, center_y + 10, color_ticks, 10, anchor_x="center")
+
+        # Ajout des graduations sur l'axe Y
+        for y in range(0, height + 1, tick_interval):
+            y_world = y - center_y
+            arcade.draw_line(center_x - 5, y, center_x + 5, y, color_ticks, 1)  # Petite graduation
+            if y_world % (2 * tick_interval) == 0:  # Grande graduation avec label
+                arcade.draw_text(f"{int(y_world)}", center_x + 10, y - 5, color_ticks, 10, anchor_x="left")
+   
+    def draw_obstacles(self, color=(255, 0, 0), square_size=8):
+        """
+        Dessine les obstacles sur la carte sous forme de petits carrés.
+
+        :param color: Couleur des obstacles (RGB), par défaut rouge.
+        :param square_size: Taille des carrés représentant les obstacles (en pixels), par défaut 5.
+        """
+        # Obtenir la liste des obstacles en coordonnées du monde réel
+        obstacles = self.grid.get_obstacles()
+
+        if self.iter == 100:
+            print(obstacles)
+
+        # Convertir les coordonnées du monde réel en pixels pour dessiner
+        width, height = self.size_area  # Dimensions de la carte en pixels
+        center_x = width / 2
+        center_y = height / 2
+
+        for obstacle in obstacles:
+            x_world, y_world = obstacle
+            # Conversion des coordonnées du monde en coordonnées de la carte
+            x_pixel = int(center_x + x_world)
+            y_pixel = int(center_y + y_world)
+            
+
+            # Dessiner un carré représentant l'obstacle
+            arcade.draw_rectangle_filled(
+                x_pixel, y_pixel, square_size, square_size, color
+            )
+
+            arcade.draw_circle_filled(x_world + center_x, y_world + center_y, 4, (0,255,0))
+            # Dessiner les coordonnées x, y en bleu juste à côté de chaque obstacle
+            #arcade.draw_text(f"({x_world}, {y_world})", x_world + center_x - 50 ,y_world + center_y  - 50, color=(0, 0, 255), font_size=10)
 
     def process_lidar_sensor(self, the_lidar_sensor): 
         command = {"forward": 1.0,
