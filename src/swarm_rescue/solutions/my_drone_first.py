@@ -9,7 +9,6 @@ from typing import Optional
 from heapq import heappush, heappop
 from random import randrange
 from enum import Enum
-
 import numpy as np
 
 from spg_overlay.entities.drone_abstract import DroneAbstract
@@ -21,7 +20,7 @@ from spg_overlay.utils.timer import Timer
 from spg_overlay.utils.path import Path
 from spg_overlay.utils.pose import Pose
 from spg_overlay.entities.keyboard_controller import KeyboardController
-
+from transitions import Machine
 from drone_modules.slam_module import SLAMModule
 from drone_modules.exploration_grid import ExplorationGrid
 from drone_modules.path_planner import PathPlanner
@@ -50,7 +49,6 @@ class MyDroneFirst(DroneAbstract):
                          display_lidar_graph=False,
                          **kwargs)
         
-        self.state = self.Activity.INITIAL      #SEARCHING_WOUNDED
 
         # Modules
         self.slam = SLAMModule() #Ignorer pas encore implémenter
@@ -61,21 +59,139 @@ class MyDroneFirst(DroneAbstract):
         self.stanleyController = StanleyController(wheelbase=0,yaw_rate_gain=0.3,steering_damp_gain=0.1,control_gain=2.5,softening_gain=1.0)
         self.iter = 0
         self.keyController = KeyboardController()
-
+        self.states = {'SEARCHING_WOUNDED' : self.search_wounded() , 
+                       'GRASPING_WOUNDED' : self.grasped_wounded(), 
+                       'SEARCHING_RESCUE_CENTER' :self.search_rescue_center(), 
+                       'DROPPING_AT_RESCUE_CENTER' : self.drop_wounded(), 
+                       'FOLLOW_PATH' : self.follow_path(),
+                       'INITIAL' : self.initial()}
+        self.state = 'INITIAL'
         self.pose = Pose()
         self.path = Path()
         self.timer = Timer(start_now=True)
+        self.obstacles = []
+        self.found_wounded = False
+        self.found_rescue_center = False
+    
+    def control_initialisation(self):
+        """
+        Fonction d'initialisation du drone
+        """
+        found_wounded, found_rescue_center, command_semantic = (self.process_semantic_sensor()) # command_semantic à ignorer
 
+        initialisation = { 'delta_time' : self.timer.get_elapsed_time() , 'command' : {"forward": 0.0, "lateral": 0.0, "rotation": 0.0, "grasper":0},
+                            'pose' : Pose(self.true_position(),self.true_angle()), 'lidar_values' : self.lidar_values(),
+                            'lidar_rays_angles' : self.lidar_rays_angles()}        
+        self.timer.restart()  # Redémarrage pour le prochain cycle
+        self.iter += 1
+        #self.explorationGrid.control()
+        #print(self.grid.grid)
+        
+        # Transitions de la machine à états
+        self.uptade_state()
+        # Mise à jour & Affichage de l'Occupancy Grid
+        self.grid.update_grid(initialisation['pose'],initialisation['lidar_values'],initialisation['lidar_rays_angles'])
+        self.obstacles = self.grid.get_obstacles()
+        
+        return initialisation 
+    
+    def search_wounded(self):
+        """
+        Fonction de recherche de la personne blessée
+        """
+        command = self.explorationGrid.control()
+        command["grasper"] = 0
+        return command
+    
+    def grasped_wounded(self):
+        """
+        Fonction de saisie de la personne blessée
+        """
+        command = self.control_initialisation()['command']
+        command["grasper"] = 1
+        return command
+    def search_rescue_center(self):
+        """
+        Fonction de recherche du centre de secours
+        """
+        command = self.explorationGrid.control()
+        command["grasper"] = 1
+        return command
+    def drop_wounded(self):
+        """
+        Fonction de dépose de la personne blessée
+        """
+        command = self.control_initialisation()['command']
+        command["grasper"] = 0
+        return command
+    def initial(self):
+        """
+        Fonction de suivi de chemin
+        """
+        command = self.control_initialisation()['command']
+        command["grasper"] = 0
+        pose0 = Pose(self.true_position(),self.true_angle())
+        pose1 = Pose(np.array([295,50,-np.pi/2]))
+        pose2 = Pose(np.array([230,50,-np.pi/2]))
+        pose3 = Pose(np.array([230,-100,-np.pi/2]))
+        pose4 = Pose(np.array([23,-205,-np.pi/2]))
+        pose5 = Pose(np.array([-106,203,-np.pi/2]))
+        pose6 = Pose(np.array([-250,200,-np.pi/2]))
+        pose7 = Pose(np.array([-250,-200,-np.pi/2]))
+        self.path.append(pose0)
+        self.path.append(pose1)
+        self.path.append(pose2)
+        self.path.append(pose3)
+        self.path.append(pose4)
+        self.path.append(pose5)
+        self.path.append(pose6)
+        self.path.append(pose7)
 
+        for i in range (1,self.path.length()):
+            dx = self.path._poses[i][0] - self.path._poses[i-1][0]
+            dy = self.path._poses[i][1] - self.path._poses[i-1][1]
+            self.path._poses[i][2] = np.arctan2(dx,dy)
+        
+        self.machine.trigger('initial')
+        return command
+
+    def follow_path(self):
+        """
+        Fonction de suivi de chemin
+        """
+        command = self.control_initialisation()['command']
+        command["grasper"] = 0
+        px = self.path._poses[:,0]
+        py = self.path._poses[:,1]
+        pyaw = self.path._poses[:,2]
+        limited_steering_angle, target_index, crosstrack_error = self.stanleyController.stanley_control(x = self.pose.position[0], y = self.pose.position[1], yaw=self.pose.orientation,target_velocity=0,steering_angle=5,px=px,py=py,pyaw=pyaw)
+            
+        """print("Indice du point objectif :")
+            print("Path Controller") 
+            print(self.pathTracker.current_target_index)
+            print("StanleyController :")
+            print(target_index)
+            print("crosstrack_error")
+            print(crosstrack_error)
+            print("error_distance")
+            print(self.pathTracker.error_distance)
+            print(limited_steering_angle)"""
+
+        command = self.pathTracker.control(self.pose,self.path,self.initialisation['delta_time'])
+            #command = self.pathTracker.control_with_stanley(self.pose,self.path,limited_steering_angle,target_index,crosstrack_error,delta_time)
+            # Si on a finis le chemin
+        if self.pathTracker.isFinish(self.path):
+            print("finish")
+            self.path.reset()
+            self.machine.trigger('initial') # Ensure the state transitions back to FOLLOW_PATH if needed
+        return command
 
     def control(self): # BOUCLE PRINCIPALE
         """
         Le drone utlise une Occupancy Grid pour explorer les zones non visitée 
         qui est inclus dans la classe ExplorationGrid qui s'occupe de l'exploration 
         de la grille. Lorsque la personne est trouvée nous utilisons process_semantic_sensor pour retourner à la base.
-
         """
-        # Calcul du temps écoulé depuis la dernière itération (FPS)
         delta_time = self.timer.get_elapsed_time()
         self.timer.restart()  # Redémarrage pour le prochain cycle
         self.iter += 1
@@ -95,83 +211,40 @@ class MyDroneFirst(DroneAbstract):
         vx,vy = self.measured_velocity()
         v_angle = self.measured_angular_velocity()
 
-        found_wounded, found_rescue_center, command_semantic = (self.process_semantic_sensor()) # command_semantic à ignorer
+        self.found_wounded, self.found_rescue_center, command_semantic = (self.process_semantic_sensor()) # command_semantic à ignorer
         
         # Transitions de la machine à états
-        self.uptade_state(found_wounded,found_rescue_center)
         # Mise à jour & Affichage de l'Occupancy Grid
         self.grid.update_grid(self.pose,lidar_values,lidar_rays_angles)
         obstacles = self.grid.get_obstacles()
+        self.uptade_state()
+        return self.states[self.state]
 
 
-        # Commandes selon l'état
-        if self.state is self.Activity.SEARCHING_WOUNDED:
-            command = self.explorationGrid.control()
-            command["grasper"] = 0
-        elif self.state is self.Activity.GRASPING_WOUNDED:
-            command =  command_semantic # A Modifier par un path planner et tracker
-            command["grasper"] = 1
-        elif self.state is self.Activity.SEARCHING_RESCUE_CENTER:
-            command = self.explorationGrid.control() 
-            command["grasper"] = 1
-        elif self.state is self.Activity.DROPPING_AT_RESCUE_CENTER:
-            command = command_semantic # A Modifier par un path_planner et tracker
-            command["grasper"] = 1
-        
-        # Etat intermédiaire pour les tests: Créer son chemin
-        if self.state is self.Activity.INITIAL:
-            command["grasper"] = 0
-            pose0 = Pose(self.true_position(),self.true_angle())
-            pose1 = Pose(np.array([295,50,-np.pi/2]))
-            pose2 = Pose(np.array([230,50,-np.pi/2]))
-            pose3 = Pose(np.array([230,-100,-np.pi/2]))
-            pose4 = Pose(np.array([23,-205,-np.pi/2]))
-            pose5 = Pose(np.array([-106,203,-np.pi/2]))
-            pose6 = Pose(np.array([-250,200,-np.pi/2]))
-            pose7 = Pose(np.array([-250,-200,-np.pi/2]))
-            self.path.append(pose0)
-            self.path.append(pose1)
-            self.path.append(pose2)
-            self.path.append(pose3)
-            self.path.append(pose4)
-            self.path.append(pose5)
-            self.path.append(pose6)
-            self.path.append(pose7)
-
-            for i in range (1,self.path.length()):
-                dx = self.path._poses[i][0] - self.path._poses[i-1][0]
-                dy = self.path._poses[i][1] - self.path._poses[i-1][1]
-                self.path._poses[i][2] = np.arctan2(dx,dy)
+    def uptade_state(self):
+                
+        #############
+        # TRANSITIONS OF THE STATE MACHINE
+        #############
+        if self.state == 'INITIAL':
+            self.state = 'FOLLOW PATH' if self.path.length() > 0 else 'INITIAL'
+            return self.initial()
+        if self.state == 'FOLLOW PATH':
+            self.state = 'FOLLOW PATH' if self.path.length() > 0 else 'INITIAL'
+            return self.follow_path()
+        if self.state == 'SEARCHING_WOUNDED':
+            self.state = 'GRASPING_WOUNDED' if self.found_wounded else self.state
+            return self.search_wounded()
+        if self.state == 'GRASPING_WOUNDED':
+            self.state = 'SEARCHING_RESCUE_CENTER' if self.found_wounded else 'SEARCHING_WOUNDED'
+            return self.grasp_wounded()
+        if self.state == 'SEARCHING_RESCUE_CENTER':
+            self.state = 'DROPPING_AT_RESCUE_CENTER' if self.found_rescue_center else self.state
+            return self.search_rescue_center()
+        if self.state == 'DROPPING_AT_RESCUE_CENTER':
+            self.state = 'SEARCHING_WOUNDED' if self.dropped_wounded() else 'SEARCHING_RESCUE_CENTER' if self.lost_rescue_center() else self.state
+            return self.drop_wounded()
             
-            
-            self.state = self.Activity.FOLLOW_PATH
-        elif self.state is self.Activity.FOLLOW_PATH:
-            #print(self.path._poses)
-            px = self.path._poses[:,0]
-            py = self.path._poses[:,1]
-            pyaw = self.path._poses[:,2]
-            limited_steering_angle, target_index, crosstrack_error = self.stanleyController.stanley_control(x = self.pose.position[0], y = self.pose.position[1], yaw=self.pose.orientation,target_velocity=0,steering_angle=5,px=px,py=py,pyaw=pyaw)
-            
-            """print("Indice du point objectif :")
-            print("Path Controller") 
-            print(self.pathTracker.current_target_index)
-            print("StanleyController :")
-            print(target_index)
-            print("crosstrack_error")
-            print(crosstrack_error)
-            print("error_distance")
-            print(self.pathTracker.error_distance)
-            print(limited_steering_angle)"""
-
-            command = self.pathTracker.control(self.pose,self.path,delta_time)
-            #command = self.pathTracker.control_with_stanley(self.pose,self.path,limited_steering_angle,target_index,crosstrack_error,delta_time)
-            # Si on a finis le chemin
-            if self.pathTracker.isFinish(self.path):
-                print("finish")
-                self.path.reset()
-                self.state = self.Activity.FOLLOW_PATH # A changer
-            
-        return command
     
     
     def draw_bottom_layer(self):
@@ -332,9 +405,9 @@ class MyDroneFirst(DroneAbstract):
 
         # The drone will turn toward the zone with the more space ahead
         if size != 0:
-            if far_angle > 0:
+            if (far_angle > 0):
                 command["rotation"] = angular_vel_controller
-            elif far_angle == 0:
+            elif (far_angle == 0):
                 command["rotation"] = 0
             else:
                 command["rotation"] = -angular_vel_controller
@@ -343,7 +416,7 @@ class MyDroneFirst(DroneAbstract):
         collision = False
         if size != 0 and min_dist < 50:
             collision = True
-            if near_angle > 0:
+            if (near_angle > 0):
                 command["rotation"] = -angular_vel_controller
             else:
                 command["rotation"] = angular_vel_controller
@@ -472,36 +545,7 @@ class MyDroneFirst(DroneAbstract):
 
         return found_drone, command_comm
         
-    def uptade_state(self,found_wounded,found_rescue_center):
-                
-        #############
-        # TRANSITIONS OF THE STATE MACHINE
-        #############
 
-        if self.state is self.Activity.SEARCHING_WOUNDED and found_wounded:
-            self.state = self.Activity.GRASPING_WOUNDED
-
-        elif (self.state is self.Activity.GRASPING_WOUNDED and
-              self.base.grasper.grasped_entities):
-            self.state = self.Activity.SEARCHING_RESCUE_CENTER
-
-        elif (self.state is self.Activity.GRASPING_WOUNDED and
-              not found_wounded):
-            self.state = self.Activity.SEARCHING_WOUNDED
-
-        elif (self.state is self.Activity.SEARCHING_RESCUE_CENTER and
-              found_rescue_center):
-            self.state = self.Activity.DROPPING_AT_RESCUE_CENTER
-
-        elif (self.state is self.Activity.DROPPING_AT_RESCUE_CENTER and
-              not self.base.grasper.grasped_entities):
-            self.state = self.Activity.SEARCHING_WOUNDED
-
-        elif (self.state is self.Activity.DROPPING_AT_RESCUE_CENTER and
-              not found_rescue_center):
-            self.state = self.Activity.SEARCHING_RESCUE_CENTER
-        
-        return None
 
     def update_command_search(self,command): #Ignorer
         command_lidar, collision_lidar = self.process_lidar_sensor(self.lidar())
