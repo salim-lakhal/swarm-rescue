@@ -52,7 +52,8 @@ class MyDroneFirst(DroneAbstract):
 
         # Modules
         self.slam = SLAMModule() #Ignorer pas encore implémenter
-        self.grid = OccupancyGrid(size_area_world=self.size_area, resolution=8)
+        self.grid = OccupancyGrid(self.size_area, resolution=8)
+        print(self.size_area)
         self.explorationGrid = ExplorationGrid(drone=self,grid=self.grid)
         #self.path_planner = PathPlanner(grid=self.grid,resolution=8) #Ignorer pas encore implémenter
         self.pathTracker = PathTracker()
@@ -72,29 +73,14 @@ class MyDroneFirst(DroneAbstract):
         self.obstacles = []
         self.found_wounded = False
         self.found_rescue_center = False
-    
-    def control_initialisation(self):
-        """
-        Fonction d'initialisation du drone
-        """
-        found_wounded, found_rescue_center, command_semantic = (self.process_semantic_sensor()) # command_semantic à ignorer
+        self.command_initial = {"forward": 0.0,
+                   "lateral": 0.0,
+                   "rotation": 0.0,
+                   "grasper":0}
 
-        initialisation = { 'delta_time' : self.timer.get_elapsed_time() , 'command' : {"forward": 0.0, "lateral": 0.0, "rotation": 0.0, "grasper":0},
-                            'pose' : Pose(self.true_position(),self.true_angle()), 'lidar_values' : self.lidar_values(),
-                            'lidar_rays_angles' : self.lidar_rays_angles()}        
-        self.timer.restart()  # Redémarrage pour le prochain cycle
-        self.iter += 1
-        #self.explorationGrid.control()
-        #print(self.grid.grid)
-        
-        # Transitions de la machine à états
-        self.uptade_state()
-        # Mise à jour & Affichage de l'Occupancy Grid
-        self.grid.update_grid(initialisation['pose'],initialisation['lidar_values'],initialisation['lidar_rays_angles'])
-        self.obstacles = self.grid.get_obstacles()
-        
-        return initialisation 
-    
+
+
+            
     def search_wounded(self):
         """
         Fonction de recherche de la personne blessée
@@ -107,7 +93,7 @@ class MyDroneFirst(DroneAbstract):
         """
         Fonction de saisie de la personne blessée
         """
-        command = self.control_initialisation()['command']
+        command = self.command_initial
         command["grasper"] = 1
         return command
     def search_rescue_center(self):
@@ -121,14 +107,14 @@ class MyDroneFirst(DroneAbstract):
         """
         Fonction de dépose de la personne blessée
         """
-        command = self.control_initialisation()['command']
+        command = self.command_initial
         command["grasper"] = 0
         return command
     def initial(self):
         """
         Fonction de suivi de chemin
         """
-        command = self.control_initialisation()['command']
+        command = self.command_initial
         command["grasper"] = 0
         pose0 = Pose(self.true_position(),self.true_angle())
         pose1 = Pose(np.array([295,50,-np.pi/2]))
@@ -159,7 +145,7 @@ class MyDroneFirst(DroneAbstract):
         """
         Fonction de suivi de chemin
         """
-        command = self.control_initialisation()['command']
+        command = self.command_initial
         command["grasper"] = 0
         px = self.path._poses[:,0]
         py = self.path._poses[:,1]
@@ -192,6 +178,23 @@ class MyDroneFirst(DroneAbstract):
         qui est inclus dans la classe ExplorationGrid qui s'occupe de l'exploration 
         de la grille. Lorsque la personne est trouvée nous utilisons process_semantic_sensor pour retourner à la base.
         """
+        found_wounded, found_rescue_center, command_semantic = (self.process_semantic_sensor()) # command_semantic à ignorer
+        pose = Pose(self.true_position(),self.true_angle())
+        lidar_values = self.lidar_values()
+        lidar_rays_angles = self.lidar_rays_angles()
+        self.timer.restart()  # Redémarrage pour le prochain cycle
+        self.iter += 1
+        #self.explorationGrid.control()
+        #print(self.grid.grid)
+        
+        # Ensure pose.position values are valid
+        if not np.isnan(pose.position).any():
+            # Transitions de la machine à états
+            self.uptade_state()
+            # Mise à jour & Affichage de l'Occupancy Grid
+            self.grid.update_grid(pose, lidar_values, lidar_rays_angles)
+            self.obstacles = self.grid.get_obstacles()
+        
         delta_time = self.timer.get_elapsed_time()
         self.timer.restart()  # Redémarrage pour le prochain cycle
         self.iter += 1
@@ -213,11 +216,13 @@ class MyDroneFirst(DroneAbstract):
 
         self.found_wounded, self.found_rescue_center, command_semantic = (self.process_semantic_sensor()) # command_semantic à ignorer
         
-        # Transitions de la machine à états
-        # Mise à jour & Affichage de l'Occupancy Grid
-        self.grid.update_grid(self.pose,lidar_values,lidar_rays_angles)
-        obstacles = self.grid.get_obstacles()
-        self.uptade_state()
+        # Ensure pose.position values are valid
+        if not np.isnan(self.pose.position).any():
+            # Transitions de la machine à états
+            # Mise à jour & Affichage de l'Occupancy Grid
+            self.grid.update_grid(self.pose, lidar_values, lidar_rays_angles)
+            obstacles = self.grid.get_obstacles()
+            self.uptade_state()
         return self.states[self.state]
 
 
