@@ -27,7 +27,7 @@ class DroneBase(PhysicalPart):
             filename=path_resources + "/drone_v2.png",
             sprite_front_is_up=True,
             shape_approximation="circle",
-            # radius=15,
+            #radius=15,
             **kwargs,
         )
 
@@ -38,7 +38,7 @@ class DroneBase(PhysicalPart):
         # See: https://api.arcade.academy/en/latest/examples/pymunk_demo_top_down.html
         for pm_shape in self._pm_shapes:
             pm_shape.elasticity = 0.5
-            pm_shape.friction = 0.9 # default value in arcade is 0.2
+            pm_shape.friction =  0.9 # default value in arcade is 0.2 0.9
 
         self.forward_controller = CenteredContinuousController(name="forward")
         self.add(self.forward_controller)

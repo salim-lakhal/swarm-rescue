@@ -14,6 +14,9 @@ pandas>=2.0.3              # Analyse de données
 pathlib2>=2.3.7.post1      # Gestion de chemins (backport pour Python 2, si nécessaire)
 python-statemachine>=2.3.6 # Gestion des machines à états
 simple-pid>=1.0.0
+transformations>=2023.8.0
+hdbscan>=0.8.33            # Clustering hiérarchique basé sur la densité
+scikit-learn>=1.3.0        # Apprentissage automatique (inclut RANSACRegressor)
 
 # Notes pour les utilisateurs (sections désactivées si nécessaire)
 # -e /home/battesti/projetCompetDronesDGA/simple-playgrounds

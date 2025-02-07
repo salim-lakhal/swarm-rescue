@@ -18,16 +18,18 @@ from spg_overlay.utils.utils import normalize_angle, circular_mean
 from spg_overlay.utils.misc_data import MiscData
 from spg_overlay.utils.utils import normalize_angle, sign
 from spg_overlay.utils.timer import Timer
+from spg_overlay.utils.fps_display import FpsDisplay
 from spg_overlay.utils.path import Path
 from spg_overlay.utils.pose import Pose
 from spg_overlay.entities.keyboard_controller import KeyboardController
 
 from drone_modules.slam_module import SLAMModule
 from drone_modules.exploration_grid import ExplorationGrid
-from drone_modules.path_planner import PathPlanner
+from drone_modules.path_planner import RRT
 from drone_modules.path_tracker import PathTracker
 from drone_modules.occupancy_grid import OccupancyGrid
-from drone_modules.stanley_controller_piecewise import StanleyController
+from drone_modules.path_tracker_modules.stanley_controller_piecewise import StanleyController
+from drone_modules.path_tracker_modules.pure_pursuit import PurePursuitController
 
 class MyDroneFirst(DroneAbstract):
     class Activity(Enum):
@@ -58,13 +60,16 @@ class MyDroneFirst(DroneAbstract):
         self.explorationGrid = ExplorationGrid(drone=self,grid=self.grid)
         #self.path_planner = PathPlanner(grid=self.grid,resolution=8) #Ignorer pas encore implémenter
         self.pathTracker = PathTracker()
+        self.purePursuit = PurePursuitController()
         self.stanleyController = StanleyController(wheelbase=0,yaw_rate_gain=0.3,steering_damp_gain=0.1,control_gain=2.5,softening_gain=1.0)
         self.iter = 0
         self.keyController = KeyboardController()
 
         self.pose = Pose()
         self.path = Path()
+        self.fps_display = FpsDisplay(period_display=1)
         self.timer = Timer(start_now=True)
+
 
 
 
@@ -77,11 +82,11 @@ class MyDroneFirst(DroneAbstract):
         """
         # Calcul du temps écoulé depuis la dernière itération (FPS)
         delta_time = self.timer.get_elapsed_time()
+        #self.fps_display.update(display=True)
         self.timer.restart()  # Redémarrage pour le prochain cycle
         self.iter += 1
         #self.explorationGrid.control()
         #print(self.grid.grid)
-
         command = {"forward": 0.0,
                    "lateral": 0.0,
                    "rotation": 0.0,
@@ -101,8 +106,8 @@ class MyDroneFirst(DroneAbstract):
         self.uptade_state(found_wounded,found_rescue_center)
         # Mise à jour & Affichage de l'Occupancy Grid
         self.grid.update_grid(self.pose,lidar_values,lidar_rays_angles)
-        obstacles = self.grid.get_obstacles()
-
+        
+        #obstacles = self.grid.get_obstacles()
 
         # Commandes selon l'état
         if self.state is self.Activity.SEARCHING_WOUNDED:
@@ -138,11 +143,30 @@ class MyDroneFirst(DroneAbstract):
             self.path.append(pose6)
             self.path.append(pose7)
 
+
+
+            path = np.array([
+                [295, 118,0],   # Point de départ
+                [200, 118,0],   # Se diriger vers l'ouverture du mur central
+                [200, -100,0],  # Passer l'ouverture en bas du mur
+                [0, -100,0],    # Passer de l'autre côté du mur central
+                [-250, -100,0], # Se diriger vers l'ouverture du mur de gauche
+                [-250, -200,0], # Descendre à travers l'ouverture
+                [-350, -200,0]  # Point d'arrivée
+            ])
+
+            #self.path._poses = path
+
+
             for i in range (1,self.path.length()):
                 dx = self.path._poses[i][0] - self.path._poses[i-1][0]
                 dy = self.path._poses[i][1] - self.path._poses[i-1][1]
                 self.path._poses[i][2] = np.arctan2(dx,dy)
             
+            command = {"forward": 0.0,
+                   "lateral": 0.0,
+                   "rotation": 0.0,
+                   "grasper":0}
             
             self.state = self.Activity.FOLLOW_PATH
         elif self.state is self.Activity.FOLLOW_PATH:
@@ -151,7 +175,6 @@ class MyDroneFirst(DroneAbstract):
             py = self.path._poses[:,1]
             pyaw = self.path._poses[:,2]
             limited_steering_angle, target_index, crosstrack_error = self.stanleyController.stanley_control(x = self.pose.position[0], y = self.pose.position[1], yaw=self.pose.orientation,target_velocity=0,steering_angle=5,px=px,py=py,pyaw=pyaw)
-            
             """print("Indice du point objectif :")
             print("Path Controller") 
             print(self.pathTracker.current_target_index)
@@ -164,7 +187,9 @@ class MyDroneFirst(DroneAbstract):
             print(limited_steering_angle)"""
 
             command = self.pathTracker.control(self.pose,self.path,delta_time)
+            #command = self.pathTracker.control_angle(self.pose.orientation,np.pi/2,delta_time)
             #command = self.pathTracker.control_with_stanley(self.pose,self.path,limited_steering_angle,target_index,crosstrack_error,delta_time)
+            command["grasper"] = 1
             # Si on a finis le chemin
             if self.pathTracker.isFinish(self.path):
                 print("finish")

@@ -114,10 +114,11 @@ class OccupancyGrid(Grid):
         self.zoomed_grid = cv2.resize(self.zoomed_grid, new_zoomed_size,
                                       interpolation=cv2.INTER_NEAREST)
         
+        """
         self.iteration += 1
         if self.iteration % 5 == 0:
             self.display(self.grid, pose, title="Occupancy Grid")
-            self.display(self.zoomed_grid, pose, title="Zoomed Occupancy Grid")
+            self.display(self.zoomed_grid, pose, title="Zoomed Occupancy Grid")"""
         
     # Renvoie une liste de tuples (x,y) d'obstacle carré de taille 8 pixel
     def get_obstacles(self):
