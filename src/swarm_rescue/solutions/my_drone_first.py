@@ -22,7 +22,7 @@ from spg_overlay.utils.fps_display import FpsDisplay
 from spg_overlay.utils.path import Path
 from spg_overlay.utils.pose import Pose
 from spg_overlay.entities.keyboard_controller import KeyboardController
-
+from statemachine import StateMachine, State
 from drone_modules.slam_module import SLAMModule
 from drone_modules.exploration_grid import ExplorationGrid
 from drone_modules.path_planner import RRT
@@ -36,12 +36,13 @@ class MyDroneFirst(DroneAbstract):
         """
         All the states of the drone as a state machine
         """
-        SEARCHING_WOUNDED = 1
-        GRASPING_WOUNDED = 2
-        SEARCHING_RESCUE_CENTER = 3
-        DROPPING_AT_RESCUE_CENTER = 4
+        SEARCHING_WOUNDED = 0
+        GRASPING_WOUNDED = 1
+        SEARCHING_RESCUE_CENTER = 2
+        DROPPING_AT_RESCUE_CENTER = 3
         FOLLOW_PATH = 5
-        INITIAL = 99
+        INITIAL = 4
+        PATH_PLANNING = 6
 
     def __init__(self,
                  identifier: Optional[int] = None,
@@ -52,7 +53,6 @@ class MyDroneFirst(DroneAbstract):
                          display_lidar_graph=False,
                          **kwargs)
         
-        self.state = self.Activity.INITIAL      #SEARCHING_WOUNDED
 
         # Modules
         self.slam = SLAMModule() #Ignorer pas encore implémenter
@@ -63,13 +63,187 @@ class MyDroneFirst(DroneAbstract):
         self.purePursuit = PurePursuitController()
         self.stanleyController = StanleyController(wheelbase=0,yaw_rate_gain=0.3,steering_damp_gain=0.1,control_gain=2.5,softening_gain=1.0)
         self.iter = 0
-        self.keyController = KeyboardController()
-
         self.pose = Pose()
         self.path = Path()
         self.fps_display = FpsDisplay(period_display=1)
         self.timer = Timer(start_now=True)
+        self.keyController = KeyboardController()
+        self.state = self.Activity.PATH_PLANNING      #SEARCHING_WOUNDED
+        self.states = {self.Activity.SEARCHING_WOUNDED: self.searching_wounded,
+                    self.Activity.GRASPING_WOUNDED: self.grasping_wounded,
+                    self.Activity.SEARCHING_RESCUE_CENTER: self.searching_rescue_center,
+                    self.Activity.DROPPING_AT_RESCUE_CENTER: self.dropping_at_rescue_center,
+                    self.Activity.INITIAL: self.initial,
+                    self.Activity.FOLLOW_PATH: self.follow_path,
+                    self.Activity.PATH_PLANNING: self.path_planning
+                    }
+        self.state_machine = [self.Activity.SEARCHING_WOUNDED,
+                            self.Activity.GRASPING_WOUNDED,
+                            self.Activity.SEARCHING_RESCUE_CENTER,
+                            self.Activity.DROPPING_AT_RESCUE_CENTER,
+                            self.Activity.INITIAL,
+                            self.Activity.FOLLOW_PATH,
+                            self.Activity.PATH_PLANNING]
+        self.index = self.Activity.INITIAL._value_
 
+
+################
+#  STATE MACHINE                
+################
+
+
+
+    def update_state(self,found_wounded,found_rescue_center):    
+        """
+        Transitions of the State Machine 
+        using the self.state_machine
+        It increments the self.index to 
+        move from a state to another
+        """
+        if self.state != self.Activity.FOLLOW_PATH:
+            self.index += 1
+            self.index = self.index % 6
+            self.state = self.state_machine[self.index]
+        return None
+    
+    def searching_wounded(self):
+        """
+        Searching for a wounded person
+        """
+        #command = self.explorationGrid.control()
+        #command["grasper"] = 0
+        self.update_state(False,False)
+        return None
+    
+    def grasping_wounded(self,command_semantic):
+        """
+        Grasping a wounded person
+        """
+        #command =  command_semantic # A Modifier par un path planner et tracker
+        #command["grasper"] = 1
+        self.update_state(False,False)
+
+        return None
+    
+    def searching_rescue_center(self):
+        """
+        Searching for the rescue center
+        """
+        #command = self.explorationGrid.control() 
+        #command["grasper"] = 1
+        self.update_state(False,False)
+        return None
+    
+    def dropping_at_rescue_center(self,command_semantic):
+        """
+        Dropping the wounded person at the rescue center
+        """
+        #command = command_semantic # A Modifier par un path_planner et tracker
+        #command["grasper"] = 1
+        self.update_state(False,False)
+
+        return None
+    
+    def path_planning(self):
+        goal = [self.true_position()[0] + self.grid.size_area_world[0]/2,self.true_position()[1] +self.grid.size_area_world[1]/2]
+        start = [-310 + self.grid.size_area_world[0]/2, -180 + self.grid.size_area_world[1]/2]
+        obstacle = [(11 + self.grid.size_area_world[0]/2,i + self.grid.size_area_world[1]/2,3) for i in range(-93,250)]
+        for i in range(-250,89):
+            obstacle.append((-225 + self.grid.size_area_world[0]/2,i + self.grid.size_area_world[1]/2,3))
+        play_area = [0,self.grid.size_area_world[0],0,self.grid.size_area_world[1]]
+        print(play_area)
+        path_planning = RRT(start=start,
+                    goal=goal,
+                    obstacle_list=obstacle,
+                    rand_area=[-1000,1000],
+                    play_area=play_area
+                    )
+        
+        for node in path_planning.planning():
+            current_node = np.zeros(2, )
+            current_node[0] = node[0] - self.grid.size_area_world[0]/2
+            current_node[1] = node[1] - self.grid.size_area_world[1]/2
+            self.path.append(Pose(current_node))
+        self.state = self.Activity.FOLLOW_PATH
+        return None
+
+
+
+
+    def initial(self):
+        """
+        Initial state
+        """
+        command = {"forward": 0.0, "lateral": 0.0, "rotation": 0.0 , "grasper":0}
+        command["grasper"] = 0
+        pose0 = Pose(self.true_position(),self.true_angle())
+        pose1 = Pose(np.array([295,50,-np.pi/2]))
+        pose2 = Pose(np.array([230,50,-np.pi/2]))
+        pose3 = Pose(np.array([230,-100,-np.pi/2]))
+        pose4 = Pose(np.array([23,-205,-np.pi/2]))
+        pose5 = Pose(np.array([-106,203,-np.pi/2]))
+        pose6 = Pose(np.array([-250,200,-np.pi/2]))
+        pose7 = Pose(np.array([-250,-200,-np.pi/2]))
+        self.path.append(pose0)
+        self.path.append(pose1)
+        self.path.append(pose2)
+        self.path.append(pose3)
+        self.path.append(pose4)
+        self.path.append(pose5)
+        self.path.append(pose6)
+        self.path.append(pose7)
+        path = np.array([
+            [295, 118,0],   # Point de départ
+            [200, 118,0],   # Se diriger vers l'ouverture du mur central
+            [200, -100,0],  # Passer l'ouverture en bas du mur
+            [0, -100,0],    # Passer de l'autre côté du mur central
+            [-250, -100,0], # Se diriger vers l'ouverture du mur de gauche
+            [-250, -200,0], # Descendre à travers l'ouverture
+            [-350, -200,0]  # Point d'arrivée
+        ])
+
+        #self.path._poses = path
+        for i in range (1,self.path.length()):
+            dx = self.path._poses[i][0] - self.path._poses[i-1][0]
+            dy = self.path._poses[i][1] - self.path._poses[i-1][1]
+            self.path._poses[i][2] = np.arctan2(dx,dy)
+        
+        command = {"forward": 0.0,
+                "lateral": 0.0,
+                "rotation": 0.0,
+                "grasper":0}
+        self.update_state(False,False)
+
+        return command
+    def follow_path(self):
+        """
+        Follow a path
+        """
+        px = self.path._poses[:,0]
+        py = self.path._poses[:,1]
+        pyaw = self.path._poses[:,2]
+        limited_steering_angle, target_index, crosstrack_error = self.stanleyController.stanley_control(x = self.pose.position[0], y = self.pose.position[1], yaw=self.pose.orientation,target_velocity=0,steering_angle=5,px=px,py=py,pyaw=pyaw)
+        """print("Indice du point objectif :")
+        print("Path Controller") 
+        print(self.pathTracker.current_target_index)
+        print("StanleyController :")
+        print(target_index)
+        print("crosstrack_error")
+        print(crosstrack_error)
+        print("error_distance")
+        print(self.pathTracker.error_distance)
+        print(limited_steering_angle)"""
+        delta_time = self.timer.get_elapsed_time()
+        command = self.pathTracker.control(self.pose,self.path,delta_time)
+        #command = self.pathTracker.control_angle(self.pose.orientation,np.pi/2,delta_time)
+        #command = self.pathTracker.control_with_stanley(self.pose,self.path,limited_steering_angle,target_index,crosstrack_error,delta_time)
+        command["grasper"] = 0
+        # Si on a finis le chemin
+        if self.pathTracker.isFinish(self.path):
+            self.update_state(False,False)
+            command = {"forward": 0.0, "lateral": 0.0, "rotation": 0.0, "grasper": 0}
+
+        return command
 
 
 
@@ -80,248 +254,22 @@ class MyDroneFirst(DroneAbstract):
         de la grille. Lorsque la personne est trouvée nous utilisons process_semantic_sensor pour retourner à la base.
 
         """
-        # Calcul du temps écoulé depuis la dernière itération (FPS)
         delta_time = self.timer.get_elapsed_time()
-        #self.fps_display.update(display=True)
         self.timer.restart()  # Redémarrage pour le prochain cycle
         self.iter += 1
-        #self.explorationGrid.control()
-        #print(self.grid.grid)
-        command = {"forward": 0.0,
-                   "lateral": 0.0,
-                   "rotation": 0.0,
-                   "grasper":0}
-
         self.pose.position = self.true_position()
         self.pose.orientation = self.true_angle()
         lidar_values = self.lidar_values()
-        lidar_rays_angles = self.lidar_rays_angles()
-        
+        lidar_rays_angles = self.lidar_rays_angles()   
         vx,vy = self.measured_velocity()
         v_angle = self.measured_angular_velocity()
-
         found_wounded, found_rescue_center, command_semantic = (self.process_semantic_sensor()) # command_semantic à ignorer
-        
-        # Transitions de la machine à états
-        self.uptade_state(found_wounded,found_rescue_center)
         # Mise à jour & Affichage de l'Occupancy Grid
         self.grid.update_grid(self.pose,lidar_values,lidar_rays_angles)
-        
-        #obstacles = self.grid.get_obstacles()
-
-        # Commandes selon l'état
-        if self.state is self.Activity.SEARCHING_WOUNDED:
-            command = self.explorationGrid.control()
-            command["grasper"] = 0
-        elif self.state is self.Activity.GRASPING_WOUNDED:
-            command =  command_semantic # A Modifier par un path planner et tracker
-            command["grasper"] = 1
-        elif self.state is self.Activity.SEARCHING_RESCUE_CENTER:
-            command = self.explorationGrid.control() 
-            command["grasper"] = 1
-        elif self.state is self.Activity.DROPPING_AT_RESCUE_CENTER:
-            command = command_semantic # A Modifier par un path_planner et tracker
-            command["grasper"] = 1
-        
-        # Etat intermédiaire pour les tests: Créer son chemin
-        if self.state is self.Activity.INITIAL:
-            command["grasper"] = 0
-            pose0 = Pose(self.true_position(),self.true_angle())
-            pose1 = Pose(np.array([295,50,-np.pi/2]))
-            pose2 = Pose(np.array([230,50,-np.pi/2]))
-            pose3 = Pose(np.array([230,-100,-np.pi/2]))
-            pose4 = Pose(np.array([23,-205,-np.pi/2]))
-            pose5 = Pose(np.array([-106,203,-np.pi/2]))
-            pose6 = Pose(np.array([-250,200,-np.pi/2]))
-            pose7 = Pose(np.array([-250,-200,-np.pi/2]))
-            self.path.append(pose0)
-            self.path.append(pose1)
-            self.path.append(pose2)
-            self.path.append(pose3)
-            self.path.append(pose4)
-            self.path.append(pose5)
-            self.path.append(pose6)
-            self.path.append(pose7)
-
-
-
-            path = np.array([
-                [295, 118,0],   # Point de départ
-                [200, 118,0],   # Se diriger vers l'ouverture du mur central
-                [200, -100,0],  # Passer l'ouverture en bas du mur
-                [0, -100,0],    # Passer de l'autre côté du mur central
-                [-250, -100,0], # Se diriger vers l'ouverture du mur de gauche
-                [-250, -200,0], # Descendre à travers l'ouverture
-                [-350, -200,0]  # Point d'arrivée
-            ])
-
-            #self.path._poses = path
-
-
-            for i in range (1,self.path.length()):
-                dx = self.path._poses[i][0] - self.path._poses[i-1][0]
-                dy = self.path._poses[i][1] - self.path._poses[i-1][1]
-                self.path._poses[i][2] = np.arctan2(dx,dy)
-            
-            command = {"forward": 0.0,
-                   "lateral": 0.0,
-                   "rotation": 0.0,
-                   "grasper":0}
-            
-            self.state = self.Activity.FOLLOW_PATH
-        elif self.state is self.Activity.FOLLOW_PATH:
-            #print(self.path._poses)
-            px = self.path._poses[:,0]
-            py = self.path._poses[:,1]
-            pyaw = self.path._poses[:,2]
-            limited_steering_angle, target_index, crosstrack_error = self.stanleyController.stanley_control(x = self.pose.position[0], y = self.pose.position[1], yaw=self.pose.orientation,target_velocity=0,steering_angle=5,px=px,py=py,pyaw=pyaw)
-            """print("Indice du point objectif :")
-            print("Path Controller") 
-            print(self.pathTracker.current_target_index)
-            print("StanleyController :")
-            print(target_index)
-            print("crosstrack_error")
-            print(crosstrack_error)
-            print("error_distance")
-            print(self.pathTracker.error_distance)
-            print(limited_steering_angle)"""
-
-            command = self.pathTracker.control(self.pose,self.path,delta_time)
-            #command = self.pathTracker.control_angle(self.pose.orientation,np.pi/2,delta_time)
-            #command = self.pathTracker.control_with_stanley(self.pose,self.path,limited_steering_angle,target_index,crosstrack_error,delta_time)
-            command["grasper"] = 1
-            # Si on a finis le chemin
-            if self.pathTracker.isFinish(self.path):
-                print("finish")
-                self.path.reset()
-                self.state = self.Activity.FOLLOW_PATH # A changer
-            
+        command = self.states[self.state]()
         return command
     
-    
-    def draw_bottom_layer(self):
-        #self.draw_setpoint()
-        self.draw_path(path=self.path, color=(255, 0, 255))
-        self.draw_coordinate_system()
-        #self.draw_obstacles()
-        #self.draw_direction()
-        #self.draw_antedirection()
-        return None
-    
-    def draw_setpoint(self):
-        half_width = self._half_size_array[0]
-        half_height = self._half_size_array[1]
-        pt1 = self.position_setpoint + np.array([half_width, 0])
-        pt2 = self.position_setpoint + np.array([half_width, 2 * half_height])
-        arcade.draw_line(float(pt2[0]),
-                            float(pt2[1]),
-                            float(pt1[0]),
-                            float(pt1[1]),
-                            color=arcade.color.GRAY)
 
-    def draw_path(self, path, color: list[int, int, int]):
-        length = path.length()
-        # print(length)
-        pt2 = None
-        for ind_pt in range(length):
-            pose = path.get(ind_pt)
-            pt1 = pose.position + self._half_size_array
-            # print(ind_pt, pt1, pt2)
-            if ind_pt > 0:
-                arcade.draw_line(float(pt2[0]),
-                                 float(pt2[1]),
-                                 float(pt1[0]),
-                                 float(pt1[1]), color)
-            pt2 = pt1
-    
-    def draw_direction(self):
-        pt1 = np.array([self.true_position()[0], self.true_position()[1]])
-        pt1 = pt1 + self._half_size_array
-        pt2 = pt1 + 250 * np.array([math.cos(self.true_angle()),
-                                    math.sin(self.true_angle())])
-        color = (255, 64, 0)
-        arcade.draw_line(float(pt2[0]),
-                         float(pt2[1]),
-                         float(pt1[0]),
-                         float(pt1[1]),
-                         color)
-
-    def draw_antedirection(self):
-        pt1 = np.array([self.true_position()[0], self.true_position()[1]])
-        pt1 = pt1 + self._half_size_array
-        pt2 = pt1 + 150 * np.array([math.cos(self.true_angle() + np.pi / 2),
-                                    math.sin(self.true_angle() + np.pi / 2)])
-        color = (255, 64, 0)
-        arcade.draw_line(float(pt2[0]),
-                         float(pt2[1]),
-                         float(pt1[0]),
-                         float(pt1[1]),
-                         color)
-    
-    def draw_coordinate_system(self, color_axis=(0, 0, 0), color_ticks=(100, 100, 100), tick_interval=100):
-        """
-        Dessine un repère centré au milieu de la carte, avec des graduations.
-
-        :param dimensions: Dimensions de la carte (width, height) en pixels.
-        :param color_axis: Couleur des axes (RGB), par défaut noir.
-        :param color_ticks: Couleur des graduations (RGB), par défaut gris clair.
-        :param tick_interval: Distance entre les graduations (en pixels), par défaut 50.
-        """
-        width, height  = self.size_area
-        center_x = width / 2
-        center_y = height / 2
-
-        # Dessin des axes
-        arcade.draw_line(0, center_y, width, center_y, color_axis, 2)  # Axe X
-        arcade.draw_line(center_x, 0, center_x, height, color_axis, 2)  # Axe Y
-
-        # Ajout des graduations sur l'axe X
-        for x in range(0, width + 1, tick_interval):
-            x_world = x - center_x
-            arcade.draw_line(x, center_y - 5, x, center_y + 5, color_ticks, 1)  # Petite graduation
-            if x_world % (2 * tick_interval) == 0:  # Grande graduation avec label
-                arcade.draw_text(f"{int(x_world)}", x + 5, center_y + 10, color_ticks, 10, anchor_x="center")
-
-        # Ajout des graduations sur l'axe Y
-        for y in range(0, height + 1, tick_interval):
-            y_world = y - center_y
-            arcade.draw_line(center_x - 5, y, center_x + 5, y, color_ticks, 1)  # Petite graduation
-            if y_world % (2 * tick_interval) == 0:  # Grande graduation avec label
-                arcade.draw_text(f"{int(y_world)}", center_x + 10, y - 5, color_ticks, 10, anchor_x="left")
-   
-    def draw_obstacles(self, color=(255, 0, 0), square_size=8):
-        """
-        Dessine les obstacles sur la carte sous forme de petits carrés.
-
-        :param color: Couleur des obstacles (RGB), par défaut rouge.
-        :param square_size: Taille des carrés représentant les obstacles (en pixels), par défaut 5.
-        """
-        # Obtenir la liste des obstacles en coordonnées du monde réel
-        obstacles = self.grid.get_obstacles()
-
-        if self.iter == 100:
-            print(obstacles)
-
-        # Convertir les coordonnées du monde réel en pixels pour dessiner
-        width, height = self.size_area  # Dimensions de la carte en pixels
-        center_x = width / 2
-        center_y = height / 2
-
-        for obstacle in obstacles:
-            x_world, y_world = obstacle
-            # Conversion des coordonnées du monde en coordonnées de la carte
-            x_pixel = int(center_x + x_world)
-            y_pixel = int(center_y + y_world)
-            
-
-            # Dessiner un carré représentant l'obstacle
-            arcade.draw_rectangle_filled(
-                x_pixel, y_pixel, square_size, square_size, color
-            )
-
-            arcade.draw_circle_filled(x_world + center_x, y_world + center_y, 4, (0,255,0))
-            # Dessiner les coordonnées x, y en bleu juste à côté de chaque obstacle
-            #arcade.draw_text(f"({x_world}, {y_world})", x_world + center_x - 50 ,y_world + center_y  - 50, color=(0, 0, 255), font_size=10)
 
     def process_lidar_sensor(self, the_lidar_sensor): 
         command = {"forward": 1.0,
@@ -497,36 +445,7 @@ class MyDroneFirst(DroneAbstract):
 
         return found_drone, command_comm
         
-    def uptade_state(self,found_wounded,found_rescue_center):
-                
-        #############
-        # TRANSITIONS OF THE STATE MACHINE
-        #############
 
-        if self.state is self.Activity.SEARCHING_WOUNDED and found_wounded:
-            self.state = self.Activity.GRASPING_WOUNDED
-
-        elif (self.state is self.Activity.GRASPING_WOUNDED and
-              self.base.grasper.grasped_entities):
-            self.state = self.Activity.SEARCHING_RESCUE_CENTER
-
-        elif (self.state is self.Activity.GRASPING_WOUNDED and
-              not found_wounded):
-            self.state = self.Activity.SEARCHING_WOUNDED
-
-        elif (self.state is self.Activity.SEARCHING_RESCUE_CENTER and
-              found_rescue_center):
-            self.state = self.Activity.DROPPING_AT_RESCUE_CENTER
-
-        elif (self.state is self.Activity.DROPPING_AT_RESCUE_CENTER and
-              not self.base.grasper.grasped_entities):
-            self.state = self.Activity.SEARCHING_WOUNDED
-
-        elif (self.state is self.Activity.DROPPING_AT_RESCUE_CENTER and
-              not found_rescue_center):
-            self.state = self.Activity.SEARCHING_RESCUE_CENTER
-        
-        return None
 
     def update_command_search(self,command): #Ignorer
         command_lidar, collision_lidar = self.process_lidar_sensor(self.lidar())
@@ -620,3 +539,128 @@ class MyDroneFirst(DroneAbstract):
             command["rotation"] = -1.0
 
         return found_wounded, found_rescue_center, command
+    
+
+    def draw_bottom_layer(self):
+        #self.draw_setpoint()
+        self.draw_path(path=self.path, color=(255, 0, 255))
+        self.draw_coordinate_system()
+        #self.draw_obstacles()
+        #self.draw_direction()
+        #self.draw_antedirection()
+        return None
+    
+    def draw_setpoint(self):
+        half_width = self._half_size_array[0]
+        half_height = self._half_size_array[1]
+        pt1 = self.position_setpoint + np.array([half_width, 0])
+        pt2 = self.position_setpoint + np.array([half_width, 2 * half_height])
+        arcade.draw_line(float(pt2[0]),
+                            float(pt2[1]),
+                            float(pt1[0]),
+                            float(pt1[1]),
+                            color=arcade.color.GRAY)
+
+    def draw_path(self, path, color: list[int, int, int]):
+        length = path.length()
+        # print(length)
+        pt2 = None
+        for ind_pt in range(length):
+            pose = path.get(ind_pt)
+            pt1 = pose.position + self._half_size_array
+            # print(ind_pt, pt1, pt2)
+            if ind_pt > 0:
+                arcade.draw_line(float(pt2[0]),
+                                 float(pt2[1]),
+                                 float(pt1[0]),
+                                 float(pt1[1]), color)
+            pt2 = pt1
+    
+    def draw_direction(self):
+        pt1 = np.array([self.true_position()[0], self.true_position()[1]])
+        pt1 = pt1 + self._half_size_array
+        pt2 = pt1 + 250 * np.array([math.cos(self.true_angle()),
+                                    math.sin(self.true_angle())])
+        color = (255, 64, 0)
+        arcade.draw_line(float(pt2[0]),
+                         float(pt2[1]),
+                         float(pt1[0]),
+                         float(pt1[1]),
+                         color)
+
+    def draw_antedirection(self):
+        pt1 = np.array([self.true_position()[0], self.true_position()[1]])
+        pt1 = pt1 + self._half_size_array
+        pt2 = pt1 + 150 * np.array([math.cos(self.true_angle() + np.pi / 2),
+                                    math.sin(self.true_angle() + np.pi / 2)])
+        color = (255, 64, 0)
+        arcade.draw_line(float(pt2[0]),
+                         float(pt2[1]),
+                         float(pt1[0]),
+                         float(pt1[1]),
+                         color)
+    
+    def draw_coordinate_system(self, color_axis=(0, 0, 0), color_ticks=(100, 100, 100), tick_interval=100):
+        """
+        Dessine un repère centré au milieu de la carte, avec des graduations.
+
+        :param dimensions: Dimensions de la carte (width, height) en pixels.
+        :param color_axis: Couleur des axes (RGB), par défaut noir.
+        :param color_ticks: Couleur des graduations (RGB), par défaut gris clair.
+        :param tick_interval: Distance entre les graduations (en pixels), par défaut 50.
+        """
+        width, height  = self.size_area
+        center_x = width / 2
+        center_y = height / 2
+
+        # Dessin des axes
+        arcade.draw_line(0, center_y, width, center_y, color_axis, 2)  # Axe X
+        arcade.draw_line(center_x, 0, center_x, height, color_axis, 2)  # Axe Y
+
+        # Ajout des graduations sur l'axe X
+        for x in range(0, width + 1, tick_interval):
+            x_world = x - center_x
+            arcade.draw_line(x, center_y - 5, x, center_y + 5, color_ticks, 1)  # Petite graduation
+            if x_world % (2 * tick_interval) == 0:  # Grande graduation avec label
+                arcade.draw_text(f"{int(x_world)}", x + 5, center_y + 10, color_ticks, 10, anchor_x="center")
+
+        # Ajout des graduations sur l'axe Y
+        for y in range(0, height + 1, tick_interval):
+            y_world = y - center_y
+            arcade.draw_line(center_x - 5, y, center_x + 5, y, color_ticks, 1)  # Petite graduation
+            if y_world % (2 * tick_interval) == 0:  # Grande graduation avec label
+                arcade.draw_text(f"{int(y_world)}", center_x + 10, y - 5, color_ticks, 10, anchor_x="left")
+   
+    def draw_obstacles(self, color=(255, 0, 0), square_size=8):
+        """
+        Dessine les obstacles sur la carte sous forme de petits carrés.
+
+        :param color: Couleur des obstacles (RGB), par défaut rouge.
+        :param square_size: Taille des carrés représentant les obstacles (en pixels), par défaut 5.
+        """
+        # Obtenir la liste des obstacles en coordonnées du monde réel
+        obstacles = self.grid.get_obstacles()
+
+        if self.iter == 100:
+            print(obstacles)
+
+        # Convertir les coordonnées du monde réel en pixels pour dessiner
+        width, height = self.size_area  # Dimensions de la carte en pixels
+        center_x = width / 2
+        center_y = height / 2
+
+        for obstacle in obstacles:
+            x_world, y_world = obstacle
+            # Conversion des coordonnées du monde en coordonnées de la carte
+            x_pixel = int(center_x + x_world)
+            y_pixel = int(center_y + y_world)
+            
+
+            # Dessiner un carré représentant l'obstacle
+            arcade.draw_rectangle_filled(
+                x_pixel, y_pixel, square_size, square_size, color
+            )
+
+            arcade.draw_circle_filled(x_world + center_x, y_world + center_y, 4, (0,255,0))
+            # Dessiner les coordonnées x, y en bleu juste à côté de chaque obstacle
+            #arcade.draw_text(f"({x_world}, {y_world})", x_world + center_x - 50 ,y_world + center_y  - 50, color=(0, 0, 255), font_size=10)
