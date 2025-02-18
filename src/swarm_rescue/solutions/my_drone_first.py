@@ -145,29 +145,35 @@ class MyDroneFirst(DroneAbstract):
         return None
     
     def path_planning(self):
-        goal = [self.true_position()[0] + self.grid.size_area_world[0]/2,self.true_position()[1] +self.grid.size_area_world[1]/2]
-        start = [-310 + self.grid.size_area_world[0]/2, -180 + self.grid.size_area_world[1]/2]
-        obstacle = [(11 + self.grid.size_area_world[0]/2,i + self.grid.size_area_world[1]/2,3) for i in range(-93,250)]
+        goal = [(self.true_position()[0] + self.grid.size_area_world[0]/2)/10,(self.true_position()[1] +self.grid.size_area_world[1]/2)/10]
+        start = [(-310 + self.grid.size_area_world[0]/2)/10, (-180 + self.grid.size_area_world[1]/2)/10]
+        obstacle = [(11 + self.grid.size_area_world[0]/2,i + self.grid.size_area_world[1]/2,2) for i in range(-93,250)]
         for i in range(-250,89):
-            obstacle.append((-225 + self.grid.size_area_world[0]/2,i + self.grid.size_area_world[1]/2,3))
-        play_area = [0,self.grid.size_area_world[0],0,self.grid.size_area_world[1]]
-        print(play_area)
+            obstacle.append((-225 + self.grid.size_area_world[0]/2,i + self.grid.size_area_world[1]/2,2))
+        obstacle_list = self.conv_obstacle(obstacle)
+        play_area = [5,self.grid.size_area_world[0]/10-5,5,self.grid.size_area_world[1]/10-5]
         path_planning = RRT(start=start,
                     goal=goal,
-                    obstacle_list=obstacle,
-                    rand_area=[-1000,1000],
+                    obstacle_list=obstacle_list,
+                    rand_area=[-100,100],
                     play_area=play_area
                     )
         
         for node in path_planning.planning():
             current_node = np.zeros(2, )
-            current_node[0] = node[0] - self.grid.size_area_world[0]/2
-            current_node[1] = node[1] - self.grid.size_area_world[1]/2
+            current_node[0] = node[0]*10 - self.grid.size_area_world[0]/2
+            current_node[1] = node[1]*10 - self.grid.size_area_world[1]/2
             self.path.append(Pose(current_node))
         self.state = self.Activity.FOLLOW_PATH
         return None
 
-
+    @staticmethod
+    def conv_obstacle(obstacles):
+        converted_obstacles = []
+        for obstacle in obstacles:
+            converted_obstacle = (obstacle[0] / 10, obstacle[1] / 10, obstacle[2])
+            converted_obstacles.append(converted_obstacle)
+        return converted_obstacles
 
 
     def initial(self):

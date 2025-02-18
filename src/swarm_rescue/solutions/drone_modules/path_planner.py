@@ -53,7 +53,7 @@ class RRT:
                  goal_sample_rate=5,
                  max_iter=300000,
                  play_area=None,
-                 robot_radius=25,
+                 robot_radius=5,
                  ):
         """
         Setting Parameter
