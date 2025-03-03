@@ -158,14 +158,7 @@ class MyDroneFirst(DroneAbstract):
                     rand_area=[-max(self.grid.x_max_grid,self.grid.y_max_grid),max(self.grid.x_max_grid,self.grid.y_max_grid)],
                     play_area=play_area
                     )
-        n_pred = len(path_planning.planning())
         simplify_path = path_planning.planning()
-        n= 0
-        while n_pred != n:
-            n_pred = n
-            simplify_path = self.simplify_path(simplify_path)
-            n= len(simplify_path)
-            print(n)
         for node in simplify_path:
             current_node = np.zeros(2, )
             current_node[0] = node[0]*10 - self.grid.size_area_world[0]/2
@@ -173,29 +166,7 @@ class MyDroneFirst(DroneAbstract):
             self.path.append(Pose(current_node))
         self.state = self.Activity.FOLLOW_PATH
         return None
-    @staticmethod
-    def simplify_path(path):
-        resp = []
-        i=0
-        while i < len(path) -2:
-            x1 = path[i][0]
-            x2 = path[i+1][0]
-            x3 = path[i+2][0]
-            y1 = path[i][1]
-            y2 = path[i+1][1]
-            y3 = path[i+2][1]
-            x_mid = (x1 + x3)/2
-            y_mid = (y1 + y3)/2
-            if math.sqrt(((x_mid - x2)**2 + (y_mid - y2)**2)) <= 1.5 :
-                resp.append((x1,y1))
-                resp.append((x3,y3))
-                i+=3
-            else:
-                resp.append((x1,y1))
-                resp.append((x2,y2))
-                resp.append((x3,y3))
-                i+=2
-        return resp
+
             
     @staticmethod
     def conv_obstacle(obstacles):
