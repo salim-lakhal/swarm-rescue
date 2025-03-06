@@ -107,8 +107,6 @@ class MyDroneFirst(DroneAbstract):
         v_angle = self.measured_angular_velocity()
         # Mise à jour & Affichage de l'Occupancy Grid
         self.grid.update_grid(self.pose,lidar_values,lidar_rays_angles)
-        print(self.state)
-        print(self.pose_initial.position)
         command = self.states[self.state]()
         return command
 
