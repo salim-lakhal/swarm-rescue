@@ -48,7 +48,7 @@ class PathTracker:
         self.iter_path = 0
         self.path_done = Path()
         self.error_distance = 0
-        self.tolerance = 20
+        self.tolerance = 30
 
     # Implémenter plus tard
     def control_with_stanley(self,current_pose:Pose,path:Path,limited_steering_angle,target_index,crosstrack_error,delta_time):
@@ -160,7 +160,6 @@ class PathTracker:
             return {"forward": 0, "lateral": 0, "rotation": 0}
         
         
-        self.update_point_index()
         #self.update_path_done(current_pose)
 
         theta = current_pose.orientation
@@ -194,6 +193,8 @@ class PathTracker:
         command = {"forward": forward,
             "lateral": lateral,
             "rotation": rotation}
+        
+        self.update_point_index()
 
         return command
 

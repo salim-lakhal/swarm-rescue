@@ -28,6 +28,7 @@ class OccupancyGrid(Grid):
         self.obstacles = []
         self.iteration = 0
 
+
     def find_frontier(self):
         """
         Find frontier cells in the occupancy grid.
@@ -38,17 +39,17 @@ class OccupancyGrid(Grid):
         # Loop through each cell in the grid
         for x in range(1, self.grid.shape[0] - 1):  # Exclude borders to avoid out-of-bounds
             for y in range(1, self.grid.shape[1] - 1):
-                if self.grid[x, y] == -4.0:  # Free cell
+                if self.grid[x, y] <= -4.0:  # Free cell
                     # Check if any adjacent cell is unknown (0)
                     neighbors = self.grid[x-1:x+2, y-1:y+2]
                     if np.any(neighbors == 0):  # There is an unknown cell around
                         frontier_points.append((x, y))
 
         # Convert grid indices to world coordinates
-        return [
-            (pt[0] * self.resolution, pt[1] * self.resolution)
+        return np.array([
+            self._conv_grid_to_world(pt[0],pt[1])
             for pt in frontier_points
-        ]
+        ])
     
     def update_grid(self, pose: Pose,lidar_values,lidar_rays_angles):
         """
@@ -114,11 +115,11 @@ class OccupancyGrid(Grid):
         self.zoomed_grid = cv2.resize(self.zoomed_grid, new_zoomed_size,
                                       interpolation=cv2.INTER_NEAREST)
         
-        """
+        
         self.iteration += 1
         if self.iteration % 5 == 0:
             self.display(self.grid, pose, title="Occupancy Grid")
-            self.display(self.zoomed_grid, pose, title="Zoomed Occupancy Grid")"""
+            self.display(self.zoomed_grid, pose, title="Zoomed Occupancy Grid")
         
     # Renvoie une liste de tuples (x,y) d'obstacle carré de taille 8 pixel
     def get_obstacles(self):
@@ -127,7 +128,7 @@ class OccupancyGrid(Grid):
             for y in range(1, self.grid.shape[1] - 1):
                 if self.grid[x, y] > 0:
                    x_world,y_world= self._conv_grid_to_world(x,y)
-                   obstacles.append((x_world, y_world))
+                   obstacles.append((x_world,y_world))
         return obstacles
 
     def save_grid(self):

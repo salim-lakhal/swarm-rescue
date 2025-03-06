@@ -47,7 +47,7 @@ class MyMapIntermediate01(MapAbstract):
         self._no_gps_zone = NoGpsZone(size=(400, 500))
         self._no_gps_zone_pos = ((-190, 0), 0)
 
-        self._wounded_persons_pos =[(-310, -180)] #[(295, 100)]
+        self._wounded_persons_pos =[(-310, -180)]
         self._wounded_persons_path = [[(-260, -170), (-360, -190)], ] #[[]]
         self._number_wounded_persons = len(self._wounded_persons_pos)
         self._wounded_persons: List[WoundedPerson] = []
