@@ -158,8 +158,8 @@ class MyDroneFirst(DroneAbstract):
                     rand_area=[-max(self.grid.x_max_grid,self.grid.y_max_grid),max(self.grid.x_max_grid,self.grid.y_max_grid)],
                     play_area=play_area
                     )
-        simplify_path = path_planning.planning()
-        for node in simplify_path:
+        path = path_planning.planning()
+        for node in path:
             current_node = np.zeros(2, )
             current_node[0] = node[0]*10 - self.grid.size_area_world[0]/2
             current_node[1] = node[1]*10 - self.grid.size_area_world[1]/2
