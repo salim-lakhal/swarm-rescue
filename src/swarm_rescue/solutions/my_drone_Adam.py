@@ -9,9 +9,10 @@ from typing import Optional
 from heapq import heappush, heappop
 from random import randrange
 from enum import Enum
+from spg_overlay.utils.utils import clamp
 
 import numpy as np
-
+import random
 from spg_overlay.entities.drone_abstract import DroneAbstract
 from spg_overlay.entities.drone_distance_sensors import DroneSemanticSensor
 from spg_overlay.utils.utils import normalize_angle, circular_mean
@@ -30,7 +31,7 @@ from drone_modules.path_tracker import PathTracker
 from drone_modules.occupancy_grid import OccupancyGrid
 from drone_modules.path_tracker_modules.stanley_controller_piecewise import StanleyController
 from drone_modules.path_tracker_modules.pure_pursuit import PurePursuitController
-
+import queue
 class MyDroneFirst(DroneAbstract):
     class Activity(Enum):
         """
@@ -85,12 +86,20 @@ class MyDroneFirst(DroneAbstract):
                             self.Activity.FOLLOW_PATH,
                             self.Activity.PATH_PLANNING]
         self.index = self.Activity.INITIAL._value_
+        self.points = queue.SimpleQueue()
 
 
 ################
 #  STATE MACHINE                
 ################
 
+
+    def randomPoint(self):
+        point = (random.uniform(-self.grid.size_area_world[0]/2+50,self.grid.size_area_world[0]/2-50),random.uniform(-self.grid.size_area_world[1]/2+50,self.grid.size_area_world[1]/2-50))
+        resp = (int((point[0] + self.grid.size_area_world[0]/2)/10) , int((point[1] + self.grid.size_area_world[1]/2)/10))
+        print(resp)
+        return resp
+    
 
 
     def update_state(self,found_wounded,found_rescue_center):    
@@ -145,19 +154,21 @@ class MyDroneFirst(DroneAbstract):
         return None
     
     def path_planning(self):
-        goal = [(self.true_position()[0] + self.grid.size_area_world[0]/2)/10,(self.true_position()[1] +self.grid.size_area_world[1]/2)/10]
-        start = [(-310 + self.grid.size_area_world[0]/2)/10, (-180 + self.grid.size_area_world[1]/2)/10]
+        goal = [(self.true_position()[0] + self.grid.size_area_world[0]/2)/10,(self.true_position()[1] + self.grid.size_area_world[1]/2)/10]
         obstacle = [(11 + self.grid.size_area_world[0]/2,i + self.grid.size_area_world[1]/2,2) for i in range(-93,250)]
+        self.points.put(self.randomPoint())
         for i in range(-250,89):
-            obstacle.append((-225 + self.grid.size_area_world[0]/2,i + self.grid.size_area_world[1]/2,2))
-        obstacle_list = self.conv_obstacle(obstacle)
+            obstacle.append((-225 + self.grid.size_area_world[0]/2,i + self.grid.size_area_world[1]/2,1))
+        obstacles = self.grid.get_obstacles()
+        obstacle_list = self.conv_obstacle(obstacles)
         play_area = [5,self.grid.size_area_world[0]/10-5,5,self.grid.size_area_world[1]/10-5]
-        path_planning = RRT(start=start,
+        path_planning = RRT(start=self.points.get(),
                     goal=goal,
                     obstacle_list=obstacle_list,
                     rand_area=[-max(self.grid.x_max_grid,self.grid.y_max_grid),max(self.grid.x_max_grid,self.grid.y_max_grid)],
                     play_area=play_area
                     )
+        self.path.reset()
         path = path_planning.planning()
         for node in path:
             current_node = np.zeros(2, )
@@ -166,16 +177,74 @@ class MyDroneFirst(DroneAbstract):
             self.path.append(Pose(current_node))
         self.state = self.Activity.FOLLOW_PATH
         return None
-
+    
             
     @staticmethod
     def conv_obstacle(obstacles):
         converted_obstacles = []
         for obstacle in obstacles:
-            converted_obstacle = (obstacle[0] / 10, obstacle[1] / 10, obstacle[2])
+            converted_obstacle = (int(obstacle[0] / 10), int(obstacle[1] / 10), 1)
             converted_obstacles.append(converted_obstacle)
-        return converted_obstacles
+        return set(converted_obstacles)
 
+    def wall_following(self):
+        """
+        État de suivi de mur.
+        """
+        # Récupérer les valeurs du LiDAR
+        lidar_values = self.lidar_values()
+        lidar_angles = self.lidar_rays_angles()
+
+        # Appeler la fonction de suivi de mur
+        command = self.wall_following_control(lidar_values, lidar_angles, K=50, forward_speed=1.0, angular_speed=0.5)
+
+        
+
+        return command
+    def wall_following_control(self, lidar_values, lidar_angles, K=50, forward_speed=1.0, angular_speed=0.5):
+        """
+        Fonction de contrôle pour le suivi de mur.
+        
+        :param lidar_values: Liste des distances mesurées par le LiDAR.
+        :param lidar_angles: Liste des angles correspondants aux mesures du LiDAR.
+        :param K: Distance constante à maintenir par rapport au mur.
+        :param forward_speed: Vitesse de déplacement vers l'avant.
+        :param angular_speed: Vitesse de rotation.
+        :return: Commande de mouvement pour le drone.
+        """
+        # Initialisation de la commande
+        command = {"forward": 0.0, "lateral": 0.0, "rotation": 0.0}
+
+        # Détection des distances devant et à droite
+        front_dist = min([dist for dist, angle in zip(lidar_values, lidar_angles) if -np.pi/4 < angle < np.pi/4])
+        right_dist = min([dist for dist, angle in zip(lidar_values, lidar_angles) if np.pi/4 < angle < 3*np.pi/4])
+
+        # Erreur de distance par rapport à K
+        error_distance = right_dist - K
+
+        # Contrôleur PID pour la rotation
+        rotation_command = self.pathTracker.pid_steering.compute(error_distance, delta_time=1/30)
+        rotation_command = clamp(rotation_command, -1.0, 1.0)
+
+        # Contrôleur PID pour la vitesse
+        forward_command = self.pathTracker.pid_forward.compute(front_dist - K, delta_time=1/30)
+        forward_command = clamp(forward_command, 0.0, forward_speed)
+
+        # Logique de suivi de mur
+        if front_dist < K:  # Obstacle détecté devant
+            # Ralentir et ajuster la rotation
+            command["forward"] = forward_command * 0.5
+            command["rotation"] = rotation_command
+        elif right_dist > K * 1.2:  # Plus de mur à droite
+            # Tourner à droite pour suivre un nouveau mur
+            command["rotation"] = -angular_speed
+            command["forward"] = forward_command * 0.5
+        else:
+            # Suivre le mur à distance K
+            command["rotation"] = rotation_command
+            command["forward"] = forward_command
+
+        return command
 
     def initial(self):
         """
@@ -245,10 +314,20 @@ class MyDroneFirst(DroneAbstract):
         #command = self.pathTracker.control_angle(self.pose.orientation,np.pi/2,delta_time)
         #command = self.pathTracker.control_with_stanley(self.pose,self.path,limited_steering_angle,target_index,crosstrack_error,delta_time)
         command["grasper"] = 0
+        
+        if min(self.lidar_values())<20:
+            self.state = self.Activity.
+            while self.iter <1000:
+                self.wall_following()
+                self.iter+=1
+            self.iter = 0
+            self.state = self.Activity.PATH_PLANNING
+
         # Si on a finis le chemin
         if self.pathTracker.isFinish(self.path):
             self.update_state(False,False)
             command = {"forward": 0.0, "lateral": 0.0, "rotation": 0.0, "grasper": 0}
+            self.state = self.Activity.PATH_PLANNING
 
         return command
 
