@@ -48,7 +48,7 @@ class PathTracker:
         self.iter_path = 0
         self.path_done = Path()
         self.error_distance = 0
-        self.tolerance = 30
+        self.tolerance = 50
 
     # Implémenter plus tard
     def control_with_stanley(self,current_pose:Pose,path:Path,limited_steering_angle,target_index,crosstrack_error,delta_time):

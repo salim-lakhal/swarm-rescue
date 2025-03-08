@@ -213,9 +213,13 @@ class MyDroneFirst(DroneAbstract):
         self.path_planning()
         self.state = self.Activity.FOLLOW_PATH
         #command = self.explorationGrid.control() 
-        #command["grasper"] = 1
         
-        return None
+        command = {"forward": 0.0,
+                "lateral": 0.0,
+                "rotation": 0.0,
+                "grasper":1}
+        
+        return command
     
     def follow_path(self):
         """
@@ -249,40 +253,50 @@ class MyDroneFirst(DroneAbstract):
 
         return command
     
+    
     def path_planning(self):
         start = [(self.pose_initial.position[0] + self.grid.size_area_world[0]/2)/10,(self.pose_initial.position[1] +self.grid.size_area_world[1]/2)/10]
         goal = [(self.pose.position[0] + self.grid.size_area_world[0]/2)/10, (self.pose.position[1]+ self.grid.size_area_world[1]/2)/10]
-        obstacle = [(11 + self.grid.size_area_world[0]/2,i + self.grid.size_area_world[1]/2,2) for i in range(-93,250)]
-        for i in range(-250,89):
-            obstacle.append((-225 + self.grid.size_area_world[0]/2,i + self.grid.size_area_world[1]/2,2))
-        obstacle_list = self.conv_obstacle(obstacle)
-        play_area = [3,self.grid.size_area_world[0]/10-3,3,self.grid.size_area_world[1]/10-3]
-        if start < goal :
+        obstacles = self.grid.get_obstacles()
+        obstacle_list = self.conv_obstacle(obstacles)
+        obstacle_real = [(11 + self.grid.size_area_world[0]/2,i + self.grid.size_area_world[1]/2,2) for i in range(-93,250)]
+        print(self.grid.size_area_world)
+        play_area = [0,self.grid.size_area_world[0]/10,0,self.grid.size_area_world[1]/10]
+        if np.linalg.norm(start - self.pose.position) < np.linalg.norm(goal-self.pose.position):
             tmp = start
             start = goal
-            goal = start
+            goal = tmp
         path_planning = RRT(start=start,
                     goal=goal,
                     obstacle_list=obstacle_list,
-                    rand_area=[-max(self.grid.x_max_grid,self.grid.y_max_grid),max(self.grid.x_max_grid,self.grid.y_max_grid)],
+                    rand_area = [0, self.grid.size_area_world[0]/10],
+
                     play_area=play_area
                     )
+        print(f"Start: {start}, Goal: {goal}")
+
         path = path_planning.planning()
-        for node in path:
-            current_node = np.zeros(2, )
-            current_node[0] = node[0]*10 - self.grid.size_area_world[0]/2
-            current_node[1] = node[1]*10 - self.grid.size_area_world[1]/2
-            self.path.append(Pose(current_node))
-        self.state = self.Activity.FOLLOW_PATH
+
+        if path is None or len(path) == 0:
+            print("Problème : Aucun chemin trouvé par RRT !")
+            self.state = self.Activity.SEARCHING_RESCUE_CENTER
+        else : 
+            print("BRAVO : Chemin trouvé par RRT !")
+            for node in path:
+                current_node = np.zeros(2, )
+                current_node[0] = node[0]*10 - self.grid.size_area_world[0]/2
+                current_node[1] = node[1]*10 - self.grid.size_area_world[1]/2
+                self.path.append(Pose(current_node))
+            self.state = self.Activity.FOLLOW_PATH
         return None
           
-    @staticmethod
-    def conv_obstacle(obstacles):
-        converted_obstacles = []
-        for obstacle in obstacles:
-            converted_obstacle = (int(obstacle[0] / 10), int(obstacle[1] / 10), 2)
-            converted_obstacles.append(converted_obstacle)
-        return converted_obstacles
+    def conv_obstacle(self,obstacles):
+            converted_obstacles = []
+            for obstacle in obstacles:
+                converted_obstacle = (((obstacle[0]+self.grid.size_area_world[0]/2) / 10), ((obstacle[1]+self.grid.size_area_world[1]/2) / 10), 0.2)
+                converted_obstacles.append(converted_obstacle)
+            return converted_obstacles
+
 
     def wall_following(self):
             """

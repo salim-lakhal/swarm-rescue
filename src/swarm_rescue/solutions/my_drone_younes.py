@@ -135,10 +135,10 @@ class MyDroneFirst(DroneAbstract):
         with open("data_corrected_position.csv",'a') as f:
             np.savetxt(f, self.pose.position.reshape(1, 2), delimiter=',', fmt='%f')
         
-        with open("data3_true_vx.csv",'a') as f:
+        with open("data_true_vx.csv",'a') as f:
             np.savetxt(f, self.true_velocity().reshape(1, 2), delimiter=',', fmt='%f')
 
-        with open("data4_measure_vx.csv",'a') as g:
+        with open("data_measure_vx.csv",'a') as g:
             np.savetxt(g, self.measured_velocity().reshape(1, 2), delimiter=',', fmt='%f')
         
         """
