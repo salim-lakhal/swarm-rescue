@@ -61,13 +61,18 @@ class MyDroneFirst(DroneAbstract):
         self.explorationGrid = ExplorationGrid(drone=self,grid=self.grid)
         #self.path_planner = PathPlanner(grid=self.grid,resolution=8) #Ignorer pas encore implémenter
         self.pathTracker = PathTracker()
-        self.purePursuit = PurePursuitController()
-        self.stanleyController = StanleyController(wheelbase=0,yaw_rate_gain=0.3,steering_damp_gain=0.1,control_gain=2.5,softening_gain=1.0)
         self.iter = 0
         self.grasp = 0
+
         self.pose_initial = Pose()
         self.pose = Pose()
         self.path = Path()
+
+        self.command = {"forward": 0.0,
+                "lateral": 0.0,
+                "rotation": 0.0,
+                "grasper":0}
+        
         self.fps_display = FpsDisplay(period_display=1)
         self.timer = Timer(start_now=True)
         self.keyController = KeyboardController()
@@ -103,11 +108,15 @@ class MyDroneFirst(DroneAbstract):
         self.pose.orientation = self.true_angle()
         lidar_values = self.lidar_values()
         lidar_rays_angles = self.lidar_rays_angles()   
-        vx,vy = self.measured_velocity()
+        self.speed = self.measured_velocity()
         v_angle = self.measured_angular_velocity()
+        
         # Mise à jour & Affichage de l'Occupancy Grid
         self.grid.update_grid(self.pose,lidar_values,lidar_rays_angles)
         command = self.states[self.state]()
+        
+        if self.is_drone_stuck(command=command):
+            print("Drone bloquée")
         return command
 
 
@@ -137,40 +146,6 @@ class MyDroneFirst(DroneAbstract):
         """
         Initial state
         """
-        command = {"forward": 0.0, "lateral": 0.0, "rotation": 0.0}
-        pose0 = Pose(self.true_position(),self.true_angle())
-        pose1 = Pose(np.array([295,50,-np.pi/2]))
-        pose2 = Pose(np.array([230,50,-np.pi/2]))
-        pose3 = Pose(np.array([230,-100,-np.pi/2]))
-        pose4 = Pose(np.array([23,-205,-np.pi/2]))
-        pose5 = Pose(np.array([-106,203,-np.pi/2]))
-        pose6 = Pose(np.array([-250,200,-np.pi/2]))
-        pose7 = Pose(np.array([-250,-200,-np.pi/2]))
-        self.path.append(pose0)
-        self.path.append(pose1)
-        self.path.append(pose2)
-        self.path.append(pose3)
-        self.path.append(pose4)
-        self.path.append(pose5)
-        self.path.append(pose6)
-        self.path.append(pose7)
-        path = np.array([
-            [295, 118,0],   # Point de départ
-            [200, 118,0],   # Se diriger vers l'ouverture du mur central
-            [200, -100,0],  # Passer l'ouverture en bas du mur
-            [0, -100,0],    # Passer de l'autre côté du mur central
-            [-250, -100,0], # Se diriger vers l'ouverture du mur de gauche
-            [-250, -200,0], # Descendre à travers l'ouverture
-            [-350, -200,0]  # Point d'arrivée
-        ])
-
-        #self.path._poses = path
-        for i in range (1,self.path.length()):
-            dx = self.path._poses[i][0] - self.path._poses[i-1][0]
-            dy = self.path._poses[i][1] - self.path._poses[i-1][1]
-            self.path._poses[i][2] = np.arctan2(dx,dy)
-        
-        self.path.reset()
         self.pose_initial.position = self.pose.position
         command = {"forward": 0.0,
                 "lateral": 0.0,
@@ -259,7 +234,6 @@ class MyDroneFirst(DroneAbstract):
         obstacles = self.grid.get_obstacles()
         obstacle_list = self.conv_obstacle(obstacles)
         obstacle_real = [(11 + self.grid.size_area_world[0]/2,i + self.grid.size_area_world[1]/2,2) for i in range(-93,250)]
-        print(self.grid.size_area_world)
         play_area = [0,self.grid.size_area_world[0]/10,0,self.grid.size_area_world[1]/10]
         if np.linalg.norm(start - self.pose.position) < np.linalg.norm(goal-self.pose.position):
             tmp = start
@@ -296,7 +270,6 @@ class MyDroneFirst(DroneAbstract):
                 converted_obstacles.append(converted_obstacle)
             return converted_obstacles
 
-
     def wall_following(self):
             """
             État de suivi de mur.
@@ -306,7 +279,7 @@ class MyDroneFirst(DroneAbstract):
             lidar_angles = self.lidar_rays_angles()
 
             # Appeler la fonction de suivi de mur
-            command = self.wall_following_control(lidar_values, lidar_angles, K=50, forward_speed=1.0, angular_speed=0.5)
+            command = self.wall_following_control(lidar_values, lidar_angles)
 
             
 
@@ -356,6 +329,7 @@ class MyDroneFirst(DroneAbstract):
                 command["forward"] = forward_command
 
             return command
+
 
     def process_lidar_sensor(self, the_lidar_sensor): 
         command = {"forward": 1.0,
@@ -408,6 +382,7 @@ class MyDroneFirst(DroneAbstract):
                 command["rotation"] = angular_vel_controller
 
         return command, collision
+
 
     def define_message_for_all(self):#Ignorer
         """
@@ -750,3 +725,31 @@ class MyDroneFirst(DroneAbstract):
             arcade.draw_circle_filled(x_world + center_x, y_world + center_y, 4, (0,255,0))
             # Dessiner les coordonnées x, y en bleu juste à côté de chaque obstacle
             #arcade.draw_text(f"({x_world}, {y_world})", x_world + center_x - 50 ,y_world + center_y  - 50, color=(0, 0, 255), font_size=10)
+    
+    def is_drone_stuck(self,distance_threshold=20, speed_threshold=0.5,command ={"forward": 0.0,
+                "lateral": 0.0,
+                "rotation": 0.0,
+                "grasper":0} ):
+        """
+        Détermine si le drone est bloqué contre un mur.
+
+        :param self.lidar_values(): Distance mesurée par le LIDAR (en mètres).
+        :param speed: Vitesse actuelle du drone (en m/s).
+        :param position_history: Historique des positions du drone (liste de tuples (x, y)).
+        :param distance_threshold: Seuil de distance pour considérer que le drone est proche d'un mur (en mètres).
+        :param speed_threshold: Seuil de vitesse pour considérer que le drone est immobile (en m/s).
+        :param position_threshold: Seuil de variation de position pour considérer que le drone ne bouge pas (en mètres).
+        :return: True si le drone est bloqué, False sinon.
+        """
+        
+        # 1. Vérifier si le drone est proche d'un mur
+        if min(self.lidar_values()) < distance_threshold:
+            # 2. Vérifier si la vitesse est très faible
+            if np.linalg.norm(self.speed) < speed_threshold:
+                # 3. Vérifier si la position n'a pas changé significativement
+                
+                if command["forward"] != 0 or command["forward"] != 0:
+                    # Le drone est proche d'un mur, ne bouge pas et sa position ne change pas
+                    return True
+        
+        return False
