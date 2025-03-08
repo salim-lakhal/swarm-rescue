@@ -190,15 +190,10 @@ class RRT:
     def check_collision(self, node, robot_radius):
         if node is None:
             return False
-        for (ox, oy, size) in self.obstacle_list:
-            dx_list = [ox - x for x in node.path_x]
-            dy_list = [oy - y for y in node.path_y]
-            d_list = [dx * dx + dy * dy for (dx, dy) in zip(dx_list, dy_list)]
+        return all((ox - x) ** 2 + (oy - y) ** 2 > (size + robot_radius) ** 2
+                for (ox, oy, size) in self.obstacle_list
+                for x, y in zip(node.path_x, node.path_y))
 
-            if min(d_list) <= (size + robot_radius) ** 2:
-                return False  # collision
-
-        return True  # safe
 
 
     @staticmethod

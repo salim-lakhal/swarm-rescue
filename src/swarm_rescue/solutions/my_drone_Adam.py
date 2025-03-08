@@ -7,17 +7,19 @@ from math import sqrt
 from copy import deepcopy
 from typing import Optional
 from heapq import heappush, heappop
+import queue
 from random import randrange
 from enum import Enum
-from spg_overlay.utils.utils import clamp
+import random
 
 import numpy as np
-import random
+
 from spg_overlay.entities.drone_abstract import DroneAbstract
 from spg_overlay.entities.drone_distance_sensors import DroneSemanticSensor
 from spg_overlay.utils.utils import normalize_angle, circular_mean
 from spg_overlay.utils.misc_data import MiscData
 from spg_overlay.utils.utils import normalize_angle, sign
+from spg_overlay.utils.utils import clamp
 from spg_overlay.utils.timer import Timer
 from spg_overlay.utils.fps_display import FpsDisplay
 from spg_overlay.utils.path import Path
@@ -31,7 +33,7 @@ from drone_modules.path_tracker import PathTracker
 from drone_modules.occupancy_grid import OccupancyGrid
 from drone_modules.path_tracker_modules.stanley_controller_piecewise import StanleyController
 from drone_modules.path_tracker_modules.pure_pursuit import PurePursuitController
-import queue
+
 class MyDroneFirst(DroneAbstract):
     class Activity(Enum):
         """
@@ -57,24 +59,25 @@ class MyDroneFirst(DroneAbstract):
 
         # Modules
         self.slam = SLAMModule() #Ignorer pas encore implémenter
-        self.grid = OccupancyGrid(size_area_world=self.size_area, resolution=8)
+        self.grid = OccupancyGrid(size_area_world=self.size_area, resolution=10)
         self.explorationGrid = ExplorationGrid(drone=self,grid=self.grid)
         #self.path_planner = PathPlanner(grid=self.grid,resolution=8) #Ignorer pas encore implémenter
         self.pathTracker = PathTracker()
         self.purePursuit = PurePursuitController()
         self.stanleyController = StanleyController(wheelbase=0,yaw_rate_gain=0.3,steering_damp_gain=0.1,control_gain=2.5,softening_gain=1.0)
         self.iter = 0
+        self.grasp = 0
+        self.pose_initial = Pose()
         self.pose = Pose()
         self.path = Path()
         self.fps_display = FpsDisplay(period_display=1)
         self.timer = Timer(start_now=True)
         self.keyController = KeyboardController()
-        self.state = self.Activity.PATH_PLANNING      #SEARCHING_WOUNDED
+        self.state = self.Activity.SEARCHING_WOUNDED    #SEARCHING_WOUNDED
         self.states = {self.Activity.SEARCHING_WOUNDED: self.searching_wounded,
                     self.Activity.GRASPING_WOUNDED: self.grasping_wounded,
                     self.Activity.SEARCHING_RESCUE_CENTER: self.searching_rescue_center,
                     self.Activity.DROPPING_AT_RESCUE_CENTER: self.dropping_at_rescue_center,
-                    self.Activity.INITIAL: self.initial,
                     self.Activity.FOLLOW_PATH: self.follow_path,
                     self.Activity.PATH_PLANNING: self.path_planning
                     }
@@ -82,256 +85,14 @@ class MyDroneFirst(DroneAbstract):
                             self.Activity.GRASPING_WOUNDED,
                             self.Activity.SEARCHING_RESCUE_CENTER,
                             self.Activity.DROPPING_AT_RESCUE_CENTER,
-                            self.Activity.INITIAL,
                             self.Activity.FOLLOW_PATH,
                             self.Activity.PATH_PLANNING]
-        self.index = self.Activity.INITIAL._value_
-        self.points = queue.SimpleQueue()
-
-
-################
-#  STATE MACHINE                
-################
-
-
-    def randomPoint(self):
-        point = (random.uniform(-self.grid.size_area_world[0]/2+50,self.grid.size_area_world[0]/2-50),random.uniform(-self.grid.size_area_world[1]/2+50,self.grid.size_area_world[1]/2-50))
-        resp = (int((point[0] + self.grid.size_area_world[0]/2)/10) , int((point[1] + self.grid.size_area_world[1]/2)/10))
-        print(resp)
-        return resp
-    
-
-
-    def update_state(self,found_wounded,found_rescue_center):    
-        """
-        Transitions of the State Machine 
-        using the self.state_machine
-        It increments the self.index to 
-        move from a state to another
-        """
-        if self.state != self.Activity.FOLLOW_PATH:
-            self.index += 1
-            self.index = self.index % 6
-            self.state = self.state_machine[self.index]
-        return None
-    
-    def searching_wounded(self):
-        """
-        Searching for a wounded person
-        """
-        #command = self.explorationGrid.control()
-        #command["grasper"] = 0
-        self.update_state(False,False)
-        return None
-    
-    def grasping_wounded(self,command_semantic):
-        """
-        Grasping a wounded person
-        """
-        #command =  command_semantic # A Modifier par un path planner et tracker
-        #command["grasper"] = 1
-        self.update_state(False,False)
-
-        return None
-    
-    def searching_rescue_center(self):
-        """
-        Searching for the rescue center
-        """
-        #command = self.explorationGrid.control() 
-        #command["grasper"] = 1
-        self.update_state(False,False)
-        return None
-    
-    def dropping_at_rescue_center(self,command_semantic):
-        """
-        Dropping the wounded person at the rescue center
-        """
-        #command = command_semantic # A Modifier par un path_planner et tracker
-        #command["grasper"] = 1
-        self.update_state(False,False)
-
-        return None
-    
-    def path_planning(self):
-        goal = [(self.true_position()[0] + self.grid.size_area_world[0]/2)/10,(self.true_position()[1] + self.grid.size_area_world[1]/2)/10]
-        obstacle = [(11 + self.grid.size_area_world[0]/2,i + self.grid.size_area_world[1]/2,2) for i in range(-93,250)]
-        self.points.put(self.randomPoint())
-        for i in range(-250,89):
-            obstacle.append((-225 + self.grid.size_area_world[0]/2,i + self.grid.size_area_world[1]/2,1))
-        obstacles = self.grid.get_obstacles()
-        obstacle_list = self.conv_obstacle(obstacles)
-        play_area = [5,self.grid.size_area_world[0]/10-5,5,self.grid.size_area_world[1]/10-5]
-        path_planning = RRT(start=self.points.get(),
-                    goal=goal,
-                    obstacle_list=obstacle_list,
-                    rand_area=[-max(self.grid.x_max_grid,self.grid.y_max_grid),max(self.grid.x_max_grid,self.grid.y_max_grid)],
-                    play_area=play_area
-                    )
-        self.path.reset()
-        path = path_planning.planning()
-        for node in path:
-            current_node = np.zeros(2, )
-            current_node[0] = node[0]*10 - self.grid.size_area_world[0]/2
-            current_node[1] = node[1]*10 - self.grid.size_area_world[1]/2
-            self.path.append(Pose(current_node))
-        self.state = self.Activity.FOLLOW_PATH
-        return None
-    
-            
-    @staticmethod
-    def conv_obstacle(obstacles):
-        converted_obstacles = []
-        for obstacle in obstacles:
-            converted_obstacle = (int(obstacle[0] / 10), int(obstacle[1] / 10), 1)
-            converted_obstacles.append(converted_obstacle)
-        return set(converted_obstacles)
-
-    def wall_following(self):
-        """
-        État de suivi de mur.
-        """
-        # Récupérer les valeurs du LiDAR
-        lidar_values = self.lidar_values()
-        lidar_angles = self.lidar_rays_angles()
-
-        # Appeler la fonction de suivi de mur
-        command = self.wall_following_control(lidar_values, lidar_angles, K=50, forward_speed=1.0, angular_speed=0.5)
-
-        
-
-        return command
-    def wall_following_control(self, lidar_values, lidar_angles, K=50, forward_speed=1.0, angular_speed=0.5):
-        """
-        Fonction de contrôle pour le suivi de mur.
-        
-        :param lidar_values: Liste des distances mesurées par le LiDAR.
-        :param lidar_angles: Liste des angles correspondants aux mesures du LiDAR.
-        :param K: Distance constante à maintenir par rapport au mur.
-        :param forward_speed: Vitesse de déplacement vers l'avant.
-        :param angular_speed: Vitesse de rotation.
-        :return: Commande de mouvement pour le drone.
-        """
-        # Initialisation de la commande
-        command = {"forward": 0.0, "lateral": 0.0, "rotation": 0.0}
-
-        # Détection des distances devant et à droite
-        front_dist = min([dist for dist, angle in zip(lidar_values, lidar_angles) if -np.pi/4 < angle < np.pi/4])
-        right_dist = min([dist for dist, angle in zip(lidar_values, lidar_angles) if np.pi/4 < angle < 3*np.pi/4])
-
-        # Erreur de distance par rapport à K
-        error_distance = right_dist - K
-
-        # Contrôleur PID pour la rotation
-        rotation_command = self.pathTracker.pid_steering.compute(error_distance, delta_time=1/30)
-        rotation_command = clamp(rotation_command, -1.0, 1.0)
-
-        # Contrôleur PID pour la vitesse
-        forward_command = self.pathTracker.pid_forward.compute(front_dist - K, delta_time=1/30)
-        forward_command = clamp(forward_command, 0.0, forward_speed)
-
-        # Logique de suivi de mur
-        if front_dist < K:  # Obstacle détecté devant
-            # Ralentir et ajuster la rotation
-            command["forward"] = forward_command * 0.5
-            command["rotation"] = rotation_command
-        elif right_dist > K * 1.2:  # Plus de mur à droite
-            # Tourner à droite pour suivre un nouveau mur
-            command["rotation"] = -angular_speed
-            command["forward"] = forward_command * 0.5
-        else:
-            # Suivre le mur à distance K
-            command["rotation"] = rotation_command
-            command["forward"] = forward_command
-
-        return command
-
-    def initial(self):
-        """
-        Initial state
-        """
-        command = {"forward": 0.0, "lateral": 0.0, "rotation": 0.0 , "grasper":0}
-        command["grasper"] = 0
-        pose0 = Pose(self.true_position(),self.true_angle())
-        pose1 = Pose(np.array([295,50,-np.pi/2]))
-        pose2 = Pose(np.array([230,50,-np.pi/2]))
-        pose3 = Pose(np.array([230,-100,-np.pi/2]))
-        pose4 = Pose(np.array([23,-205,-np.pi/2]))
-        pose5 = Pose(np.array([-106,203,-np.pi/2]))
-        pose6 = Pose(np.array([-250,200,-np.pi/2]))
-        pose7 = Pose(np.array([-250,-200,-np.pi/2]))
-        self.path.append(pose0)
-        self.path.append(pose1)
-        self.path.append(pose2)
-        self.path.append(pose3)
-        self.path.append(pose4)
-        self.path.append(pose5)
-        self.path.append(pose6)
-        self.path.append(pose7)
-        path = np.array([
-            [295, 118,0],   # Point de départ
-            [200, 118,0],   # Se diriger vers l'ouverture du mur central
-            [200, -100,0],  # Passer l'ouverture en bas du mur
-            [0, -100,0],    # Passer de l'autre côté du mur central
-            [-250, -100,0], # Se diriger vers l'ouverture du mur de gauche
-            [-250, -200,0], # Descendre à travers l'ouverture
-            [-350, -200,0]  # Point d'arrivée
-        ])
-
-        #self.path._poses = path
-        for i in range (1,self.path.length()):
-            dx = self.path._poses[i][0] - self.path._poses[i-1][0]
-            dy = self.path._poses[i][1] - self.path._poses[i-1][1]
-            self.path._poses[i][2] = np.arctan2(dx,dy)
-        
-        command = {"forward": 0.0,
-                "lateral": 0.0,
-                "rotation": 0.0,
-                "grasper":0}
-        self.update_state(False,False)
-
-        return command
-    def follow_path(self):
-        """
-        Follow a path
-        """
-        px = self.path._poses[:,0]
-        py = self.path._poses[:,1]
-        pyaw = self.path._poses[:,2]
-        #limited_steering_angle, target_index, crosstrack_error = self.stanleyController.stanley_control(x = self.pose.position[0], y = self.pose.position[1], yaw=self.pose.orientation,target_velocity=0,steering_angle=5,px=px,py=py,pyaw=pyaw)
-        """print("Indice du point objectif :")
-        print("Path Controller") 
-        print(self.pathTracker.current_target_index)
-        print("StanleyController :")
-        print(target_index)
-        print("crosstrack_error")
-        print(crosstrack_error)
-        print("error_distance")
-        print(self.pathTracker.error_distance)
-        print(limited_steering_angle)"""
-        delta_time = self.timer.get_elapsed_time()
-        command = self.pathTracker.control(self.pose,self.path,delta_time)
-        #command = self.pathTracker.control_angle(self.pose.orientation,np.pi/2,delta_time)
-        #command = self.pathTracker.control_with_stanley(self.pose,self.path,limited_steering_angle,target_index,crosstrack_error,delta_time)
-        command["grasper"] = 0
-        
-        if min(self.lidar_values())<20:
-            self.state = self.Activity.
-            while self.iter <1000:
-                self.wall_following()
-                self.iter+=1
-            self.iter = 0
-            self.state = self.Activity.PATH_PLANNING
-
-        # Si on a finis le chemin
-        if self.pathTracker.isFinish(self.path):
-            self.update_state(False,False)
-            command = {"forward": 0.0, "lateral": 0.0, "rotation": 0.0, "grasper": 0}
-            self.state = self.Activity.PATH_PLANNING
-
-        return command
-
-
+        self.points = queue.Queue()
+        self.planned = False
+        self.rescue = self.gps_values()
+        self.historic = []
+        self.point_index = 0
+        self.follow = False
 
     def control(self): # BOUCLE PRINCIPALE
         """
@@ -341,20 +102,222 @@ class MyDroneFirst(DroneAbstract):
         """
         delta_time = self.timer.get_elapsed_time()
         self.timer.restart()  # Redémarrage pour le prochain cycle
-        self.iter += 1
         self.pose.position = self.true_position()
         self.pose.orientation = self.true_angle()
         lidar_values = self.lidar_values()
         lidar_rays_angles = self.lidar_rays_angles()   
         vx,vy = self.measured_velocity()
         v_angle = self.measured_angular_velocity()
-        found_wounded, found_rescue_center, command_semantic = (self.process_semantic_sensor()) # command_semantic à ignorer
         # Mise à jour & Affichage de l'Occupancy Grid
         self.grid.update_grid(self.pose,lidar_values,lidar_rays_angles)
         command = self.states[self.state]()
+        print(self.state)
+        
+        return command
+
+
+################
+#  STATE MACHINE                
+################
+
+
+
+    def update_state(self):    
+        """
+        Transitions of the State Machine 
+        using the self.state_machine
+        It increments the self.index to 
+        move from a state to another
+        """
+
+        if self.state != self.Activity.FOLLOW_PATH:
+            self.index += 1
+            self.index = self.index % 6
+            self.state = self.state_machine[self.index]
+        
+
+        return None
+    
+    
+    def searching_wounded(self):
+        """
+        Searching for a wounded person
+        """
+        #command = self.explorationGrid.control()
+        
+        found_wounded,found_rescue_center,command = self.process_semantic_sensor()
+        if found_wounded:
+            self.state = self.Activity.GRASPING_WOUNDED
+        if min(self.lidar_values())<20 or self.follow:
+            self.path.reset()
+            command = self.wall_following()
+            self.follow = True
+        elif not self.follow:
+            if not self.planned:
+                self.path_planning()
+                self.planned = True
+                self.follow = False
+            command = self.follow_path()
+            self.iter = 0
+        command["grasper"] = 0
         return command
     
+    def grasping_wounded(self):
+        """
+        Grasping a wounded person
+        """
+        found_wounded,found_rescue_center,command = self.process_semantic_sensor()
+        command["grasper"] = 1
+        if self.grasped_entities():
+            command["grasper"] = 1
+            self.state = self.Activity.SEARCHING_RESCUE_CENTER
+        self.iter = 1
+        print("Grasping Wounded - grasped:", self.grasped_entities())
 
+        return command
+    
+    def searching_rescue_center(self):
+        """
+        Searching for the rescue center
+        """
+        self.path.reset()
+        test = self.path_planning(start=self.rescue)
+        print("Searching Rescue Center - path planned:", test)
+        command = self.follow_path()
+        #command = self.explorationGrid.control() 
+        #command["grasper"] = 1
+        
+        return command
+    
+    def follow_path(self):
+        """
+        Follow a path
+        """
+        found_wounded,found_rescue_center,command = self.process_semantic_sensor()
+        delta_time = self.timer.get_elapsed_time()
+
+        # Si on a finis le chemin
+        if self.pathTracker.isFinish(self.path):
+            self.point_index +=1
+            self.path.reset()
+            self.state = self.Activity.DROPPING_AT_RESCUE_CENTER
+            command = {"forward": 0.0, "lateral": 0.0, "rotation": 0.0}
+            self.planned = False
+        elif self.is_inside_return_area and self.iter ==1:
+            self.path.reset()
+            self.state = self.Activity.SEARCHING_WOUNDED
+        command = self.pathTracker.control(self.pose,self.path,delta_time)
+        print("Follow Path - path finished:", self.pathTracker.isFinish(self.path))
+        return command
+    
+    def dropping_at_rescue_center(self):
+        """
+        Dropping the wounded person at the rescue center
+        """
+        found_wounded,found_rescue_center,command = self.process_semantic_sensor()
+        command["grasper"] = 1
+        if not self.grasped_entities():
+            self.state = self.Activity.SEARCHING_WOUNDED
+            command["grasper"] = 1
+        self.iter = 0
+        print("Dropping - grasped:", self.grasped_entities())
+        return command
+    def randomPoint(self):
+        point = (random.uniform(-self.grid.size_area_world[0]/2+50,self.grid.size_area_world[0]/2-50),random.uniform(-self.grid.size_area_world[1]/2+50,self.grid.size_area_world[1]/2-50))
+        resp = (int((point[0] + self.grid.size_area_world[0]/2)/10) , int((point[1] + self.grid.size_area_world[1]/2)/10))
+        return resp
+    
+    def path_planning(self,start=[]):
+        goal = [(self.true_position()[0] + self.grid.size_area_world[0]/2)/10,(self.true_position()[1] + self.grid.size_area_world[1]/2)/10]
+        if len(start) == 0:
+            point = self.randomPoint()
+            self.historic.append(point)
+        else:
+            point = start
+            self.historic.append(point)
+        obstacles = self.grid.get_obstacles()
+        obstacle_list = self.conv_obstacle(obstacles)
+        play_area = [5,self.grid.size_area_world[0]/10-5,5,self.grid.size_area_world[1]/10-5]
+        path_planning = RRT(start=self.historic[self.point_index],
+                    goal=goal,
+                    obstacle_list=obstacle_list,
+                    rand_area = [0, self.grid.size_area_world[0]/10],  
+                    play_area=play_area
+                    )
+        self.path.reset()
+        path = path_planning.planning()
+        for node in path:
+            current_node = np.zeros(2, )
+            current_node[0] = node[0]*10 - self.grid.size_area_world[0]/2
+            current_node[1] = node[1]*10 - self.grid.size_area_world[1]/2
+            self.path.append(Pose(current_node))
+        return None
+          
+    @staticmethod
+    def conv_obstacle(obstacles):
+        converted_obstacles = []
+        for obstacle in obstacles:
+            converted_obstacle = (int(obstacle[0] / 10), int(obstacle[1] / 10), 1)
+            converted_obstacles.append(converted_obstacle)
+        return set(converted_obstacles)
+
+    def wall_following(self):
+            """
+            État de suivi de mur.
+            """
+                                # Récupérer les valeurs du LiDAR
+            lidar_values = self.lidar_values()
+            lidar_angles = self.lidar_rays_angles()
+
+                # Appeler la fonction de suivi de mur
+            command = self.wall_following_control(lidar_values, lidar_angles, K=50, forward_speed=1.0, angular_speed=0.5)
+
+            return command
+
+    def wall_following_control(self, lidar_values, lidar_angles, K=50, forward_speed=1.0, angular_speed=0.5):
+            """
+            Fonction de contrôle pour le suivi de mur.
+            
+            :param lidar_values: Liste des distances mesurées par le LiDAR.
+            :param lidar_angles: Liste des angles correspondants aux mesures du LiDAR.
+            :param K: Distance constante à maintenir par rapport au mur.
+            :param forward_speed: Vitesse de déplacement vers l'avant.
+            :param angular_speed: Vitesse de rotation.
+            :return: Commande de mouvement pour le drone.
+            """
+            # Initialisation de la commande
+            command = {"forward": 0.0, "lateral": 0.0, "rotation": 0.0}
+
+            # Détection des distances devant et à droite
+            front_dist = min([dist for dist, angle in zip(lidar_values, lidar_angles) if -np.pi/4 < angle < np.pi/4])
+            right_dist = min([dist for dist, angle in zip(lidar_values, lidar_angles) if np.pi/4 < angle < 3*np.pi/4])
+
+            # Erreur de distance par rapport à K
+            error_distance = right_dist - K
+
+            # Contrôleur PID pour la rotation
+            rotation_command = self.pathTracker.pid_steering.compute(error_distance, delta_time=1/30)
+            rotation_command = clamp(rotation_command, -1.0, 1.0)
+
+            # Contrôleur PID pour la vitesse
+            forward_command = self.pathTracker.pid_forward.compute(front_dist - K, delta_time=1/30)
+            forward_command = clamp(forward_command, 0.0, forward_speed)
+
+            # Logique de suivi de mur
+            if front_dist < K:  # Obstacle détecté devant
+                # Ralentir et ajuster la rotation
+                command["forward"] = forward_command * 0.5
+                command["rotation"] = rotation_command
+            elif right_dist > K * 1.2:  # Plus de mur à droite
+                # Tourner à droite pour suivre un nouveau mur
+                command["rotation"] = -angular_speed
+                command["forward"] = forward_command * 0.5
+            else:
+                # Suivre le mur à distance K
+                command["rotation"] = rotation_command
+                command["forward"] = forward_command
+
+            return command
 
     def process_lidar_sensor(self, the_lidar_sensor): 
         command = {"forward": 1.0,
@@ -416,7 +379,7 @@ class MyDroneFirst(DroneAbstract):
                     (self.measured_gps_position(), self.measured_compass_angle()))
         return msg_data
 
-    def process_communication_sensor(self): # Ignorer
+    def process_communication_sensor(self): 
         found_drone = False
 
         command_comm = {"forward": 0.0,
@@ -530,8 +493,6 @@ class MyDroneFirst(DroneAbstract):
 
         return found_drone, command_comm
         
-
-
     def update_command_search(self,command): #Ignorer
         command_lidar, collision_lidar = self.process_lidar_sensor(self.lidar())
         found, command_comm = self.process_communication_sensor()
@@ -614,6 +575,7 @@ class MyDroneFirst(DroneAbstract):
             a = min(a, 1.0)
             a = max(a, -1.0)
             command["rotation"] = a * angular_vel_controller_max
+            #command["rotation"] = self.pathTracker.control_angle(0,best_angle,1/30)["rotation"]
 
             # reduce speed if we need to turn a lot
             if abs(a) == 1:
@@ -625,10 +587,10 @@ class MyDroneFirst(DroneAbstract):
 
         return found_wounded, found_rescue_center, command
     
-
     def draw_bottom_layer(self):
         #self.draw_setpoint()
         self.draw_path(path=self.path, color=(255, 0, 255))
+            
         self.draw_coordinate_system()
         #self.draw_obstacles()
         #self.draw_direction()
@@ -726,8 +688,6 @@ class MyDroneFirst(DroneAbstract):
         # Obtenir la liste des obstacles en coordonnées du monde réel
         obstacles = self.grid.get_obstacles()
 
-        if self.iter == 100:
-            print(obstacles)
 
         # Convertir les coordonnées du monde réel en pixels pour dessiner
         width, height = self.size_area  # Dimensions de la carte en pixels
