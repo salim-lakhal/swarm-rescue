@@ -2,6 +2,7 @@
 First assessment controller
 """
 import math
+import random
 import arcade
 from math import sqrt
 from copy import deepcopy
@@ -88,7 +89,10 @@ class MyDroneFirst(DroneAbstract):
                             self.Activity.FOLLOW_PATH,
                             self.Activity.PATH_PLANNING]
         self.index = self.Activity.INITIAL._value_
-    
+        self.planned = False
+        self.zone = []
+        self.get_my_zone()
+        self.bool = False
 
     def control(self): # BOUCLE PRINCIPALE
         """
@@ -107,10 +111,21 @@ class MyDroneFirst(DroneAbstract):
         v_angle = self.measured_angular_velocity()
         # Mise à jour & Affichage de l'Occupancy Grid
         self.grid.update_grid(self.pose,lidar_values,lidar_rays_angles)
-        print(self.state)
-        print(self.pose_initial.position)
         command = self.states[self.state]()
+        if not self.bool:
+            print("Zone du drone " + str(self.identifier) + " : ")
+            print(self.zone)
+            self.bool = True
         return command
+    def get_my_zone(self):
+        """
+        Get the zone of the drone in the grid
+        """
+        id = self.identifier
+        x_zone = [(id % 5) * self.grid.size_area_world[0]/5, (id % 5 + 1) * self.grid.size_area_world[0]/5]
+        y_zone = [int(id / 5) * self.grid.size_area_world[1]/2, (int(id / 5) + 1) * self.grid.size_area_world[1]/2]
+        self.zone = [x_zone[0],x_zone[1],y_zone[0],y_zone[1]]
+        return None
 
 
 ################
@@ -191,10 +206,19 @@ class MyDroneFirst(DroneAbstract):
         found_wounded,found_rescue_center,command = self.process_semantic_sensor()
         if found_wounded:
             self.state = self.Activity.GRASPING_WOUNDED
-        command = self.wall_following()
+        if self.planned == False:
+            self.random_path()
+            self.state = self.Activity.FOLLOW_PATH
+            self.planned = True
         command["grasper"] = 0
         return command
     
+    def random_path(self):
+        self.path.reset()
+        point = [random.uniform(self.zone[0]/10,self.zone[1]/10),random.uniform(self.zone[2]/10,self.zone[3]/10)]
+        self.path_planning(goal=point)
+        return None
+
     def grasping_wounded(self):
         """
         Grasping a wounded person
@@ -212,7 +236,7 @@ class MyDroneFirst(DroneAbstract):
         """
         Searching for the rescue center
         """
-        self.path_planning()
+        self.path_planning(goal = [(self.pose_initial.position[0] + self.grid.size_area_world[0]/2)/10,(self.pose_initial.position[1] +self.grid.size_area_world[1]/2)/10])
         self.state = self.Activity.FOLLOW_PATH
         #command = self.explorationGrid.control() 
         #command["grasper"] = 1
@@ -224,16 +248,14 @@ class MyDroneFirst(DroneAbstract):
         Follow a path
         """
         found_wounded,found_rescue_center,command = self.process_semantic_sensor()
-        print(found_rescue_center)
         delta_time = self.timer.get_elapsed_time()
-        if self.is_inside_return_area:
-            self.path.reset()
-            self.state = self.Activity.DROPPING_AT_RESCUE_CENTER
+        #if self.is_inside_return_area:
+        #    self.state = self.Activity.DROPPING_AT_RESCUE_CENTER
         # Si on a finis le chemin
-        elif self.pathTracker.isFinish(self.path):
-            self.path.reset()
+        if self.pathTracker.isFinish(self.path):
             self.state = self.Activity.DROPPING_AT_RESCUE_CENTER
             command = {"forward": 0.0, "lateral": 0.0, "rotation": 0.0}
+            self.planned = False
 
         command = self.pathTracker.control(self.pose,self.path,delta_time)
         command["grasper"] = 1
@@ -251,12 +273,11 @@ class MyDroneFirst(DroneAbstract):
 
         return command
     
-    def path_planning(self):
-        start = [(self.pose_initial.position[0] + self.grid.size_area_world[0]/2)/10,(self.pose_initial.position[1] +self.grid.size_area_world[1]/2)/10]
-        goal = [(self.pose.position[0] + self.grid.size_area_world[0]/2)/10, (self.pose.position[1]+ self.grid.size_area_world[1]/2)/10]
+    def path_planning(self,goal):
+        start = [(self.pose.position[0] + self.grid.size_area_world[0]/2)/10, (self.pose.position[1]+ self.grid.size_area_world[1]/2)/10]
         obstacles = self.grid.get_obstacles()
         obstacle_list = self.conv_obstacle(obstacles)
-        print(self.grid.size_area_world)
+        obstacle_real = [(11 + self.grid.size_area_world[0]/2,i + self.grid.size_area_world[1]/2,2) for i in range(-93,250)]
         play_area = [0,self.grid.size_area_world[0]/10,0,self.grid.size_area_world[1]/10]
         if np.linalg.norm(start - self.pose.position) < np.linalg.norm(goal-self.pose.position):
             tmp = start
@@ -269,28 +290,26 @@ class MyDroneFirst(DroneAbstract):
 
                     play_area=play_area
                     )
-        print(f"Start: {start}, Goal: {goal}")
-        print(f"Obstacle list: {obstacle_list}")
-        print(f"Play area: {play_area}")
 
         path = path_planning.planning()
-        print(f"Generated path: {path}")
 
         if path is None or len(path) == 0:
-            print("⚠️ Problème : Aucun chemin trouvé par RRT !")
-
-        for node in path:
-            current_node = np.zeros(2, )
-            current_node[0] = node[0]*10 - self.grid.size_area_world[0]/2
-            current_node[1] = node[1]*10 - self.grid.size_area_world[1]/2
-            self.path.append(Pose(current_node))
-        self.state = self.Activity.FOLLOW_PATH
+            print("Problème : Aucun chemin trouvé par RRT ! Drone : " + str(self.identifier))
+            path = path_planning.planning()
+        else : 
+            print("BRAVO : Chemin trouvé par RRT ! Drone : " + str(self.identifier))
+            for node in path:
+                current_node = np.zeros(2, )
+                current_node[0] = node[0]*10 - self.grid.size_area_world[0]/2
+                current_node[1] = node[1]*10 - self.grid.size_area_world[1]/2
+                self.path.append(Pose(current_node))
+            self.state = self.Activity.FOLLOW_PATH
         return None
           
     def conv_obstacle(self,obstacles):
         converted_obstacles = []
         for obstacle in obstacles:
-            converted_obstacle = (((obstacle[0]+self.grid.size_area_world[0]/2) / 10), ((obstacle[1]+self.grid.size_area_world[1]/2) / 10), 0.2)
+            converted_obstacle = (((obstacle[0]+self.grid.size_area_world[0]/2) / 10), ((obstacle[1]+self.grid.size_area_world[1]/2) / 10), 0.1)
             converted_obstacles.append(converted_obstacle)
         return converted_obstacles
 
@@ -527,6 +546,16 @@ class MyDroneFirst(DroneAbstract):
                 command_comm["lateral"] = 0.5 * (lat1 + lat2)
 
         return found_drone, command_comm
+    
+    def draw_zone(self, color=(0, 255, 0, 100)):
+        x_min, x_max, y_min, y_max = self.zone
+        width = x_max - x_min
+        height = y_max - y_min
+        center_x = x_min + width / 2
+        center_y = y_min + height / 2
+        
+        arcade.draw_lrtb_rectangle_filled(x_min, x_max, y_max, y_min, color)
+        arcade.draw_text(f"({x_min},{y_min})", x_min, y_min, arcade.color.WHITE, 12)
         
     def update_command_search(self,command): #Ignorer
         command_lidar, collision_lidar = self.process_lidar_sensor(self.lidar())
@@ -622,10 +651,10 @@ class MyDroneFirst(DroneAbstract):
 
         return found_wounded, found_rescue_center, command
     
-    def draw_bottom_layer(self):
+    def draw_bottom_layer(self):    
         #self.draw_setpoint()
         self.draw_path(path=self.path, color=(255, 0, 255))
-            
+        self.draw_zone()
         self.draw_coordinate_system()
         #self.draw_obstacles()
         #self.draw_direction()
@@ -722,10 +751,8 @@ class MyDroneFirst(DroneAbstract):
         """
         # Obtenir la liste des obstacles en coordonnées du monde réel
         obstacles = self.grid.get_obstacles()
-        print(obstacles)
 
-        if self.iter == 100:
-            print(obstacles)
+
 
         # Convertir les coordonnées du monde réel en pixels pour dessiner
         width, height = self.size_area  # Dimensions de la carte en pixels
