@@ -51,9 +51,9 @@ class RRT:
                  expand_dis=3.0,
                  path_resolution=0.5,
                  goal_sample_rate=5,
-                 max_iter=300000,
+                 max_iter=10000,
                  play_area=None,
-                 robot_radius=5,
+                 robot_radius=1,
                  ):
         """
         Setting Parameter
