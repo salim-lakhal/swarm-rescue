@@ -210,7 +210,7 @@ class MyDroneFirst(DroneAbstract):
         """
         Searching for the rescue center
         """
-        self.path_planning()
+        self.path_planning(goal = [(self.pose_initial.position[0] + self.grid.size_area_world[0]/2)/10,(self.pose_initial.position[1] +self.grid.size_area_world[1]/2)/10])
         self.state = self.Activity.FOLLOW_PATH
         #command = self.explorationGrid.control() 
         
@@ -254,9 +254,8 @@ class MyDroneFirst(DroneAbstract):
         return command
     
     
-    def path_planning(self):
-        start = [(self.pose_initial.position[0] + self.grid.size_area_world[0]/2)/10,(self.pose_initial.position[1] +self.grid.size_area_world[1]/2)/10]
-        goal = [(self.pose.position[0] + self.grid.size_area_world[0]/2)/10, (self.pose.position[1]+ self.grid.size_area_world[1]/2)/10]
+    def path_planning(self,goal):
+        start = [(self.pose.position[0] + self.grid.size_area_world[0]/2)/10, (self.pose.position[1]+ self.grid.size_area_world[1]/2)/10]
         obstacles = self.grid.get_obstacles()
         obstacle_list = self.conv_obstacle(obstacles)
         obstacle_real = [(11 + self.grid.size_area_world[0]/2,i + self.grid.size_area_world[1]/2,2) for i in range(-93,250)]
@@ -279,7 +278,7 @@ class MyDroneFirst(DroneAbstract):
 
         if path is None or len(path) == 0:
             print("Problème : Aucun chemin trouvé par RRT !")
-            self.state = self.Activity.SEARCHING_RESCUE_CENTER
+            path = path_planning.planning()
         else : 
             print("BRAVO : Chemin trouvé par RRT !")
             for node in path:
