@@ -1,0 +1,8 @@
+The team 'TSP Squad' n°27, with Younes OUDINA, Adam BACHOTET-KAOUKDJI, Salim LAKHAL, Younes BOUTHKRIDA
+
+////////////////////////////////////////////////////////////////////////////////////////////
+*** Map: MyMapIntermediate01, special zones: none
+
+********************************
+[np.float64(69.5), np.float64(36.8)]
+[15.609027374032884, 19.14210891496554]

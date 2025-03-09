@@ -109,17 +109,7 @@ class OccupancyGrid(Grid):
         self.grid = np.clip(self.grid, THRESHOLD_MIN, THRESHOLD_MAX)
 
         # compute zoomed grid for displaying
-        self.zoomed_grid = self.grid.copy()
-        new_zoomed_size = (int(self.size_area_world[1] * 0.5),
-                           int(self.size_area_world[0] * 0.5))
-        self.zoomed_grid = cv2.resize(self.zoomed_grid, new_zoomed_size,
-                                      interpolation=cv2.INTER_NEAREST)
-        
-        
-        self.iteration += 1
-        if self.iteration % 5 == 0:
-            self.display(self.grid, pose, title="Occupancy Grid")
-            self.display(self.zoomed_grid, pose, title="Zoomed Occupancy Grid")
+
         
     # Renvoie une liste de tuples (x,y) d'obstacle carré de taille 8 pixel
     def get_obstacles(self):
@@ -131,9 +121,4 @@ class OccupancyGrid(Grid):
                    obstacles.append((x_world,y_world))
         return obstacles
 
-    def save_grid(self):
-        if self.iteration == 100:
-            with open('resultat_occupancy_grid.txt', 'w') as file:
-                for row in self.grid.T:
-                    file.write(' '.join(map(str, row)) + '\n')
 

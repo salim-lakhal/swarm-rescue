@@ -65,7 +65,7 @@ class MyDroneFirst(DroneAbstract):
         self.purePursuit = PurePursuitController()
         self.stanleyController = StanleyController(wheelbase=0,yaw_rate_gain=0.3,steering_damp_gain=0.1,control_gain=2.5,softening_gain=1.0)
         self.iter = 0
-        self.grasp = 0
+        self.grasp = False
         self.pose_initial = Pose()
         self.pose = Pose()
         self.path = Path()
@@ -93,6 +93,7 @@ class MyDroneFirst(DroneAbstract):
         self.zone = []
         self.get_my_zone()
         self.bool = False
+        self.stuck = True
 
     def control(self): # BOUCLE PRINCIPALE
         """
@@ -100,9 +101,12 @@ class MyDroneFirst(DroneAbstract):
         qui est inclus dans la classe ExplorationGrid qui s'occupe de l'exploration 
         de la grille. Lorsque la personne est trouvée nous utilisons process_semantic_sensor pour retourner à la base.
         """
+        self.iter += 1
+        if self.iter < 50*self.identifier:
+            return {"forward": 0.0, "lateral": 0.0, "rotation": 0.0, "grasper":0}
         delta_time = self.timer.get_elapsed_time()
         self.timer.restart()  # Redémarrage pour le prochain cycle
-        self.iter += 1
+        self.speed = self.measured_velocity()
         self.pose.position = self.true_position()
         self.pose.orientation = self.true_angle()
         lidar_values = self.lidar_values()
@@ -112,11 +116,71 @@ class MyDroneFirst(DroneAbstract):
         # Mise à jour & Affichage de l'Occupancy Grid
         self.grid.update_grid(self.pose,lidar_values,lidar_rays_angles)
         command = self.states[self.state]()
-        if not self.bool:
-            print("Zone du drone " + str(self.identifier) + " : ")
-            print(self.zone)
-            self.bool = True
+        if command["grasper"] == 1:
+            self.grasp = True
+        else:
+            self.grasp = False
+        if (self.is_drone_stuck(command=command) and self.stuck == True):
+            self.stuck = False
+            self.planned = False
+            self.state = self.Activity.SEARCHING_WOUNDED
+            return self.pirouette()
+        if self.zone[0] <self.pose.position[0] < self.zone[1] and self.zone[2] < self.pose.position[1] < self.zone[3] and self.iter > 400:
+            print("Je suis dans ma zone")
+            self.planned = False
+            self.Activity.SEARCHING_WOUNDED
+        if min(self.lidar_values()[80:100]) < 30:
+            self.state = self.Activity.SEARCHING_WOUNDED
+            return self.pirouette()
         return command
+    
+    def pirouette(self):
+        """
+        Faire une pirouette pour éviter un obstacle
+        """
+        command = {"forward": 0.05, "lateral": 0.0, "rotation": 0.0}
+        if np.linalg.norm(self.speed)<0.5:
+            command = {"forward": -1, "lateral": 0.0, "rotation": 0.0}
+        if min(self.lidar_values()[45:135]) in self.lidar_values()[45:90] and min(self.lidar_values()[45:135]) < 50:
+            command = {"forward": -1, "lateral": 0.0, "rotation": 1}
+
+        elif min(self.lidar_values()[45:135]) in self.lidar_values()[90:135] and min(self.lidar_values()[45:135]) < 50:
+
+            command = {"forward": -1, "lateral": 0.0, "rotation": -1}
+        if self.lidar_values()[45] < self.lidar_values()[135]:
+            command = {"forward": 0.0, "lateral": 0.0, "rotation": 1}
+        else:
+            command = {"forward": 0.0, "lateral": 0.0, "rotation": -1}
+        return command
+    
+    def is_drone_stuck(self,distance_threshold=20, speed_threshold=0.5,command ={"forward": 0.0,
+                "lateral": 0.0,
+                "rotation": 0.0,
+                "grasper":0} ):
+        """
+        Détermine si le drone est bloqué contre un mur.
+
+        :param self.lidar_values(): Distance mesurée par le LIDAR (en mètres).
+        :param speed: Vitesse actuelle du drone (en m/s).
+        :param position_history: Historique des positions du drone (liste de tuples (x, y)).
+        :param distance_threshold: Seuil de distance pour considérer que le drone est proche d'un mur (en mètres).
+        :param speed_threshold: Seuil de vitesse pour considérer que le drone est immobile (en m/s).
+        :param position_threshold: Seuil de variation de position pour considérer que le drone ne bouge pas (en mètres).
+        :return: True si le drone est bloqué, False sinon.
+        """
+        
+        # 1. Vérifier si le drone est proche d'un mur
+        if min(self.lidar_values()) < distance_threshold:
+            # 2. Vérifier si la vitesse est très faible
+            if np.linalg.norm(self.speed) < speed_threshold:
+                # 3. Vérifier si la position n'a pas changé significativement
+                
+                if command["forward"] != 0 or command["forward"] != 0:
+                    # Le drone est proche d'un mur, ne bouge pas et sa position ne change pas
+                    return True
+        
+        return False
+    
     def get_my_zone(self):
         """
         Get the zone of the drone in the grid
@@ -124,7 +188,7 @@ class MyDroneFirst(DroneAbstract):
         id = self.identifier
         x_zone = [(id % 5) * self.grid.size_area_world[0]/5, (id % 5 + 1) * self.grid.size_area_world[0]/5]
         y_zone = [int(id / 5) * self.grid.size_area_world[1]/2, (int(id / 5) + 1) * self.grid.size_area_world[1]/2]
-        self.zone = [x_zone[0],x_zone[1],y_zone[0],y_zone[1]]
+        self.zone = [x_zone[0] - self.grid.size_area_world[0]/2,x_zone[1]-self.grid.size_area_world[0]/2,y_zone[0]-self.grid.size_area_world[1]/2,y_zone[1]-self.grid.size_area_world[1]/2]
         return None
 
 
@@ -154,47 +218,9 @@ class MyDroneFirst(DroneAbstract):
         """
         Initial state
         """
-        command = {"forward": 0.0, "lateral": 0.0, "rotation": 0.0}
-        pose0 = Pose(self.true_position(),self.true_angle())
-        pose1 = Pose(np.array([295,50,-np.pi/2]))
-        pose2 = Pose(np.array([230,50,-np.pi/2]))
-        pose3 = Pose(np.array([230,-100,-np.pi/2]))
-        pose4 = Pose(np.array([23,-205,-np.pi/2]))
-        pose5 = Pose(np.array([-106,203,-np.pi/2]))
-        pose6 = Pose(np.array([-250,200,-np.pi/2]))
-        pose7 = Pose(np.array([-250,-200,-np.pi/2]))
-        self.path.append(pose0)
-        self.path.append(pose1)
-        self.path.append(pose2)
-        self.path.append(pose3)
-        self.path.append(pose4)
-        self.path.append(pose5)
-        self.path.append(pose6)
-        self.path.append(pose7)
-        path = np.array([
-            [295, 118,0],   # Point de départ
-            [200, 118,0],   # Se diriger vers l'ouverture du mur central
-            [200, -100,0],  # Passer l'ouverture en bas du mur
-            [0, -100,0],    # Passer de l'autre côté du mur central
-            [-250, -100,0], # Se diriger vers l'ouverture du mur de gauche
-            [-250, -200,0], # Descendre à travers l'ouverture
-            [-350, -200,0]  # Point d'arrivée
-        ])
-
-        #self.path._poses = path
-        for i in range (1,self.path.length()):
-            dx = self.path._poses[i][0] - self.path._poses[i-1][0]
-            dy = self.path._poses[i][1] - self.path._poses[i-1][1]
-            self.path._poses[i][2] = np.arctan2(dx,dy)
-        
-        self.path.reset()
-        self.pose_initial.position = self.pose.position
-        command = {"forward": 0.0,
-                "lateral": 0.0,
-                "rotation": 0.0,
-                "grasper":0}
-        self.state = self.Activity.SEARCHING_WOUNDED
-
+        command = {"forward": 0.0, "lateral": 0.0, "rotation": 0.0, "grasper":0}
+        if self.iter > 50*self.identifier:
+            self.state = self.Activity.SEARCHING_WOUNDED
         return command
     
     def searching_wounded(self):
@@ -204,8 +230,8 @@ class MyDroneFirst(DroneAbstract):
         #command = self.explorationGrid.control()
         
         found_wounded,found_rescue_center,command = self.process_semantic_sensor()
-        if found_wounded:
-            self.state = self.Activity.GRASPING_WOUNDED
+        #if found_wounded:
+        #    self.state = self.Activity.GRASPING_WOUNDED
         if self.planned == False:
             self.random_path()
             self.state = self.Activity.FOLLOW_PATH
@@ -215,7 +241,7 @@ class MyDroneFirst(DroneAbstract):
     
     def random_path(self):
         self.path.reset()
-        point = [random.uniform(self.zone[0]/10,self.zone[1]/10),random.uniform(self.zone[2]/10,self.zone[3]/10)]
+        point = [random.uniform((self.zone[0]+ self.grid.size_area_world[0]/2)/10,(self.zone[1]+ self.grid.size_area_world[0]/2)/10),random.uniform((self.zone[2] + self.grid.size_area_world[1]/2)/10,(self.zone[3]+ self.grid.size_area_world[1]/2)/10)]
         self.path_planning(goal=point)
         return None
 
@@ -242,24 +268,26 @@ class MyDroneFirst(DroneAbstract):
         #command["grasper"] = 1
         
         return None
-    
     def follow_path(self):
         """
         Follow a path
         """
+        self.stuck = True
         found_wounded,found_rescue_center,command = self.process_semantic_sensor()
         delta_time = self.timer.get_elapsed_time()
-        #if self.is_inside_return_area:
-        #    self.state = self.Activity.DROPPING_AT_RESCUE_CENTER
+        if self.is_inside_return_area and self.grasp:
+            self.path.reset()
+            self.state = self.Activity.DROPPING_AT_RESCUE_CENTER
         # Si on a finis le chemin
-        if self.pathTracker.isFinish(self.path):
+        elif self.pathTracker.isFinish(self.path):
+            self.path.reset()
             self.state = self.Activity.DROPPING_AT_RESCUE_CENTER
             command = {"forward": 0.0, "lateral": 0.0, "rotation": 0.0}
-            self.planned = False
 
         command = self.pathTracker.control(self.pose,self.path,delta_time)
-        command["grasper"] = 1
+        command["grasper"] = 0
         return command
+    
     
     def dropping_at_rescue_center(self):
         """
@@ -273,12 +301,13 @@ class MyDroneFirst(DroneAbstract):
 
         return command
     
+    
     def path_planning(self,goal):
         start = [(self.pose.position[0] + self.grid.size_area_world[0]/2)/10, (self.pose.position[1]+ self.grid.size_area_world[1]/2)/10]
         obstacles = self.grid.get_obstacles()
         obstacle_list = self.conv_obstacle(obstacles)
         obstacle_real = [(11 + self.grid.size_area_world[0]/2,i + self.grid.size_area_world[1]/2,2) for i in range(-93,250)]
-        play_area = [0,self.grid.size_area_world[0]/10,0,self.grid.size_area_world[1]/10]
+        play_area = [-1,self.grid.size_area_world[0]/10+1,-1,self.grid.size_area_world[1]/10+1]
         if np.linalg.norm(start - self.pose.position) < np.linalg.norm(goal-self.pose.position):
             tmp = start
             start = goal
@@ -292,12 +321,11 @@ class MyDroneFirst(DroneAbstract):
                     )
 
         path = path_planning.planning()
-
         if path is None or len(path) == 0:
-            print("Problème : Aucun chemin trouvé par RRT ! Drone : " + str(self.identifier))
+            #print("Problème : Aucun chemin trouvé par RRT ! Drone : " + str(self.identifier))
             path = path_planning.planning()
         else : 
-            print("BRAVO : Chemin trouvé par RRT ! Drone : " + str(self.identifier))
+            #print("BRAVO : Chemin trouvé par RRT ! Drone : " + str(self.identifier))
             for node in path:
                 current_node = np.zeros(2, )
                 current_node[0] = node[0]*10 - self.grid.size_area_world[0]/2
@@ -631,7 +659,7 @@ class MyDroneFirst(DroneAbstract):
                 best_angle = circular_mean(np.array(angles_list))
 
         # Gére le déplacement aprés avoir trouvée la personne à ignorer
-        if found_rescue_center or found_wounded:
+        if found_rescue_center :
             # simple P controller
             # The robot will turn until best_angle is 0
             kp = 2.0
@@ -651,126 +679,5 @@ class MyDroneFirst(DroneAbstract):
 
         return found_wounded, found_rescue_center, command
     
-    def draw_bottom_layer(self):    
-        #self.draw_setpoint()
-        self.draw_path(path=self.path, color=(255, 0, 255))
-        self.draw_zone()
-        self.draw_coordinate_system()
-        #self.draw_obstacles()
-        #self.draw_direction()
-        #self.draw_antedirection()
-        return None
+
     
-    def draw_setpoint(self):
-        half_width = self._half_size_array[0]
-        half_height = self._half_size_array[1]
-        pt1 = self.position_setpoint + np.array([half_width, 0])
-        pt2 = self.position_setpoint + np.array([half_width, 2 * half_height])
-        arcade.draw_line(float(pt2[0]),
-                            float(pt2[1]),
-                            float(pt1[0]),
-                            float(pt1[1]),
-                            color=arcade.color.GRAY)
-
-    def draw_path(self, path, color: list[int, int, int]):
-        length = path.length()
-        # print(length)
-        pt2 = None
-        for ind_pt in range(length):
-            pose = path.get(ind_pt)
-            pt1 = pose.position + self._half_size_array
-            # print(ind_pt, pt1, pt2)
-            if ind_pt > 0:
-                arcade.draw_line(float(pt2[0]),
-                                 float(pt2[1]),
-                                 float(pt1[0]),
-                                 float(pt1[1]), color)
-            pt2 = pt1
-    
-    def draw_direction(self):
-        pt1 = np.array([self.true_position()[0], self.true_position()[1]])
-        pt1 = pt1 + self._half_size_array
-        pt2 = pt1 + 250 * np.array([math.cos(self.true_angle()),
-                                    math.sin(self.true_angle())])
-        color = (255, 64, 0)
-        arcade.draw_line(float(pt2[0]),
-                         float(pt2[1]),
-                         float(pt1[0]),
-                         float(pt1[1]),
-                         color)
-
-    def draw_antedirection(self):
-        pt1 = np.array([self.true_position()[0], self.true_position()[1]])
-        pt1 = pt1 + self._half_size_array
-        pt2 = pt1 + 150 * np.array([math.cos(self.true_angle() + np.pi / 2),
-                                    math.sin(self.true_angle() + np.pi / 2)])
-        color = (255, 64, 0)
-        arcade.draw_line(float(pt2[0]),
-                         float(pt2[1]),
-                         float(pt1[0]),
-                         float(pt1[1]),
-                         color)
-    
-    def draw_coordinate_system(self, color_axis=(0, 0, 0), color_ticks=(100, 100, 100), tick_interval=100):
-        """
-        Dessine un repère centré au milieu de la carte, avec des graduations.
-
-        :param dimensions: Dimensions de la carte (width, height) en pixels.
-        :param color_axis: Couleur des axes (RGB), par défaut noir.
-        :param color_ticks: Couleur des graduations (RGB), par défaut gris clair.
-        :param tick_interval: Distance entre les graduations (en pixels), par défaut 50.
-        """
-        width, height  = self.size_area
-        center_x = width / 2
-        center_y = height / 2
-
-        # Dessin des axes
-        arcade.draw_line(0, center_y, width, center_y, color_axis, 2)  # Axe X
-        arcade.draw_line(center_x, 0, center_x, height, color_axis, 2)  # Axe Y
-
-        # Ajout des graduations sur l'axe X
-        for x in range(0, width + 1, tick_interval):
-            x_world = x - center_x
-            arcade.draw_line(x, center_y - 5, x, center_y + 5, color_ticks, 1)  # Petite graduation
-            if x_world % (2 * tick_interval) == 0:  # Grande graduation avec label
-                arcade.draw_text(f"{int(x_world)}", x + 5, center_y + 10, color_ticks, 10, anchor_x="center")
-
-        # Ajout des graduations sur l'axe Y
-        for y in range(0, height + 1, tick_interval):
-            y_world = y - center_y
-            arcade.draw_line(center_x - 5, y, center_x + 5, y, color_ticks, 1)  # Petite graduation
-            if y_world % (2 * tick_interval) == 0:  # Grande graduation avec label
-                arcade.draw_text(f"{int(y_world)}", center_x + 10, y - 5, color_ticks, 10, anchor_x="left")
-   
-    def draw_obstacles(self, color=(255, 0, 0), square_size=8):
-        """
-        Dessine les obstacles sur la carte sous forme de petits carrés.
-
-        :param color: Couleur des obstacles (RGB), par défaut rouge.
-        :param square_size: Taille des carrés représentant les obstacles (en pixels), par défaut 5.
-        """
-        # Obtenir la liste des obstacles en coordonnées du monde réel
-        obstacles = self.grid.get_obstacles()
-
-
-
-        # Convertir les coordonnées du monde réel en pixels pour dessiner
-        width, height = self.size_area  # Dimensions de la carte en pixels
-        center_x = width / 2
-        center_y = height / 2
-
-        for obstacle in obstacles:
-            x_world, y_world = obstacle
-            # Conversion des coordonnées du monde en coordonnées de la carte
-            x_pixel = int(center_x + x_world)
-            y_pixel = int(center_y + y_world)
-            
-
-            # Dessiner un carré représentant l'obstacle
-            arcade.draw_rectangle_filled(
-                x_pixel, y_pixel, square_size, square_size, color
-            )
-
-            arcade.draw_circle_filled(x_world + center_x, y_world + center_y, 4, (0,255,0))
-            # Dessiner les coordonnées x, y en bleu juste à côté de chaque obstacle
-            #arcade.draw_text(f"({x_world}, {y_world})", x_world + center_x - 50 ,y_world + center_y  - 50, color=(0, 0, 255), font_size=10)

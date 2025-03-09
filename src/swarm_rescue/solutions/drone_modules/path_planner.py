@@ -51,7 +51,7 @@ class RRT:
                  expand_dis=3.0,
                  path_resolution=0.5,
                  goal_sample_rate=5,
-                 max_iter=7500,
+                 max_iter=1000,
                  play_area=None,
                  robot_radius=1,
                  ):
