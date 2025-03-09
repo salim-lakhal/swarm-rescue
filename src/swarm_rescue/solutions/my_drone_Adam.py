@@ -94,6 +94,7 @@ class MyDroneFirst(DroneAbstract):
         self.get_my_zone()
         self.bool = False
         self.stuck = True
+        self.in_zone = False
 
     def control(self): # BOUCLE PRINCIPALE
         """
@@ -101,9 +102,11 @@ class MyDroneFirst(DroneAbstract):
         qui est inclus dans la classe ExplorationGrid qui s'occupe de l'exploration 
         de la grille. Lorsque la personne est trouvée nous utilisons process_semantic_sensor pour retourner à la base.
         """
+        command = {"forward": 0.0,
+                   "lateral": 0.0,
+                   "rotation": 0.0,
+                   "grasper":0}
         self.iter += 1
-        if self.iter < 50*self.identifier:
-            return {"forward": 0.0, "lateral": 0.0, "rotation": 0.0, "grasper":0}
         delta_time = self.timer.get_elapsed_time()
         self.timer.restart()  # Redémarrage pour le prochain cycle
         self.speed = self.measured_velocity()
@@ -116,23 +119,31 @@ class MyDroneFirst(DroneAbstract):
         # Mise à jour & Affichage de l'Occupancy Grid
         self.grid.update_grid(self.pose,lidar_values,lidar_rays_angles)
         command = self.states[self.state]()
+        # A supprimer ou à corriger
         if command["grasper"] == 1:
             self.grasp = True
         else:
             self.grasp = False
+        ####################
         if (self.is_drone_stuck(command=command) and self.stuck == True):
             self.stuck = False
             self.planned = False
             self.state = self.Activity.SEARCHING_WOUNDED
-            return self.pirouette()
-        if self.zone[0] <self.pose.position[0] < self.zone[1] and self.zone[2] < self.pose.position[1] < self.zone[3] and self.iter > 400:
+            return self.wall_following()
+        
+        ### A CONVERTIR EN ETAT
+        if self.is_in_zone() and self.iter > 400:
             print("Je suis dans ma zone")
             self.planned = False
-            self.Activity.SEARCHING_WOUNDED
-        if min(self.lidar_values()[80:100]) < 30:
+            self.in_zone = True
             self.state = self.Activity.SEARCHING_WOUNDED
-            return self.pirouette()
+        ###################
         return command
+    
+    def is_in_zone(self):
+        if self.zone[0] <self.pose.position[0] < self.zone[1] and self.zone[2] < self.pose.position[1] < self.zone[3]:
+            return True
+        return False
     
     def pirouette(self):
         """
@@ -227,8 +238,8 @@ class MyDroneFirst(DroneAbstract):
         """
         Searching for a wounded person
         """
+        command = {"forward": 0.0, "lateral": 0.0, "rotation": 0.0, "grasper":0}
         #command = self.explorationGrid.control()
-        
         found_wounded,found_rescue_center,command = self.process_semantic_sensor()
         #if found_wounded:
         #    self.state = self.Activity.GRASPING_WOUNDED
@@ -236,7 +247,9 @@ class MyDroneFirst(DroneAbstract):
             self.random_path()
             self.state = self.Activity.FOLLOW_PATH
             self.planned = True
-        command["grasper"] = 0
+        if not self.is_in_zone():
+            command = self.wall_following()
+            command["grasper"] = 0
         return command
     
     def random_path(self):
