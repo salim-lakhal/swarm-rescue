@@ -114,7 +114,6 @@ class MyDroneFirst(DroneAbstract):
         # Mise à jour & Affichage de l'Occupancy Grid
         self.grid.update_grid(self.pose,lidar_values,lidar_rays_angles)
         command = self.states[self.state]()
-        
         if self.is_drone_stuck(command=command):
             print("Drone bloquée")
         return command
@@ -201,7 +200,6 @@ class MyDroneFirst(DroneAbstract):
         Follow a path
         """
         found_wounded,found_rescue_center,command = self.process_semantic_sensor()
-        print(found_rescue_center)
         delta_time = self.timer.get_elapsed_time()
         if self.is_inside_return_area:
             self.path.reset()
@@ -235,10 +233,11 @@ class MyDroneFirst(DroneAbstract):
         obstacle_list = self.conv_obstacle(obstacles)
         obstacle_real = [(11 + self.grid.size_area_world[0]/2,i + self.grid.size_area_world[1]/2,2) for i in range(-93,250)]
         play_area = [0,self.grid.size_area_world[0]/10,0,self.grid.size_area_world[1]/10]
-        if np.linalg.norm(start - self.pose.position) < np.linalg.norm(goal-self.pose.position):
+        if np.linalg.norm(start - self.pose.position) > np.linalg.norm(goal-self.pose.position):
             tmp = start
             start = goal
             goal = tmp
+        
         path_planning = RRT(start=start,
                     goal=goal,
                     obstacle_list=obstacle_list,
@@ -252,15 +251,16 @@ class MyDroneFirst(DroneAbstract):
 
         if path is None or len(path) == 0:
             print("Problème : Aucun chemin trouvé par RRT !")
-            path = path_planning.planning()
-        else : 
-            print("BRAVO : Chemin trouvé par RRT !")
-            for node in path:
-                current_node = np.zeros(2, )
-                current_node[0] = node[0]*10 - self.grid.size_area_world[0]/2
-                current_node[1] = node[1]*10 - self.grid.size_area_world[1]/2
-                self.path.append(Pose(current_node))
-            self.state = self.Activity.FOLLOW_PATH
+            while path is None or len(path) == 0:
+                path = path_planning.planning()
+
+        print("BRAVO : Chemin trouvé par RRT !")
+        for node in path:
+            current_node = np.zeros(2, )
+            current_node[0] = node[0]*10 - self.grid.size_area_world[0]/2
+            current_node[1] = node[1]*10 - self.grid.size_area_world[1]/2
+            self.path.append(Pose(current_node))
+        self.state = self.Activity.FOLLOW_PATH
         return None
           
     def conv_obstacle(self,obstacles):
@@ -605,7 +605,8 @@ class MyDroneFirst(DroneAbstract):
         self.draw_path(path=self.path, color=(255, 0, 255))
             
         self.draw_coordinate_system()
-        #self.draw_obstacles()
+        #if self.identifier == 0:
+            #self.draw_obstacles()
         #self.draw_direction()
         #self.draw_antedirection()
         return None
@@ -700,10 +701,6 @@ class MyDroneFirst(DroneAbstract):
         """
         # Obtenir la liste des obstacles en coordonnées du monde réel
         obstacles = self.grid.get_obstacles()
-        print(obstacles)
-
-        if self.iter == 100:
-            print(obstacles)
 
         # Convertir les coordonnées du monde réel en pixels pour dessiner
         width, height = self.size_area  # Dimensions de la carte en pixels

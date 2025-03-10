@@ -199,10 +199,26 @@ class PathTracker:
         return command
 
     def isFinish(self,path):
+        if path is None:
+            return True
         if self.current_target_index >= path.length():
              self.current_target_index = 0
              return True
         return False
+    
+    def isFinishPose(self,path : Path,pose : Pose):
+        if path is None:
+            return True
+        
+        path = path._poses[:, :2]
+        target_poses = path - pose.position
+        distances = np.linalg.norm(target_poses, axis=1)
+        nearest_index = np.argmin(distances)
+
+        if(nearest_index == np.size(path)-2):
+            return True
+        return False
+
     
     def update_point_index(self):
         # Si le drone est suffisamment proche du point cible autour de 3 pixel
