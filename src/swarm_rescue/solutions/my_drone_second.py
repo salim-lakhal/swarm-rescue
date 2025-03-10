@@ -32,6 +32,8 @@ from drone_modules.path_tracker import PathTracker
 from drone_modules.occupancy_grid import OccupancyGrid
 from drone_modules.path_tracker_modules.stanley_controller_piecewise import StanleyController
 from drone_modules.path_tracker_modules.pure_pursuit import PurePursuitController
+from drone_modules.filter import KalmanFilter
+
 
 class MyDroneFirst(DroneAbstract):
     class Activity(Enum):
@@ -64,9 +66,11 @@ class MyDroneFirst(DroneAbstract):
         self.pathTracker = PathTracker()
         self.iter = 0
         self.grasp = 0
+        self.is_found_path = False
 
         self.pose_initial = Pose()
         self.pose = Pose()
+        self.pose_prec = Pose()
         self.path = Path()
 
         self.command = {"forward": 0.0,
@@ -101,31 +105,30 @@ class MyDroneFirst(DroneAbstract):
         Le drone utlise une Occupancy Grid pour explorer les zones non visitée 
         qui est inclus dans la classe ExplorationGrid qui s'occupe de l'exploration 
         de la grille. Lorsque la personne est trouvée nous utilisons process_semantic_sensor pour retourner à la base.
-        """
+        """    
+        
         delta_time = self.timer.get_elapsed_time()
         self.timer.restart()  # Redémarrage pour le prochain cycle
         self.iter += 1
-        self.pose.position = self.true_position()
-        self.pose.orientation = self.true_angle()
+        
+        if  not self.gps_is_disabled or not self.lidar_is_disabled or not self.communicator_is_disabled or not self.compass_is_disabled or not self.odometer_is_disabled:
+            return self.wall_following()
+        
+        self.pose.position = self.measured_gps_position()
+        self.pose.orientation = self.measured_compass_angle()
         lidar_values = self.lidar_values()
         lidar_rays_angles = self.lidar_rays_angles()   
         self.speed = self.measured_velocity()
-        v_angle = self.measured_angular_velocity()
         
         # Mise à jour & Affichage de l'Occupancy Grid
         self.grid.update_grid(self.pose,lidar_values,lidar_rays_angles)
-        command = self.states[self.state]()
 
-        found_wounded,found_rescue_center,command2 = self.process_semantic_sensor()
-        if found_wounded:
-            command2["grasper"] = 1
-            return command2
+        if self.is_drone_stuck() or (np.linalg.norm(self.pose.position) < 0.01):
+            return self.wall_following()
         
-        if self.is_drone_stuck():
-            command = self.wall_following()
-            print("Drone bloquée")
+        command = self.states[self.state]()
         
-        print(self.state)
+        self.pose_prec.position = self.pose.position
         return command
 
 
@@ -134,6 +137,12 @@ class MyDroneFirst(DroneAbstract):
 ################
 
 
+    def init(self):
+        self.timer.restart()  # Redémarrage pour le prochain cycle
+        self.iter += 1
+        self.pose.position = self.measured_gps_position()
+        self.pose.orientation = self.measured_compass_angle()
+        self.speed = self.measured_velocity()
 
     def update_state(self):    
         """
@@ -171,13 +180,16 @@ class MyDroneFirst(DroneAbstract):
         #command = self.explorationGrid.control()
         
         found_wounded,found_rescue_center,command = self.process_semantic_sensor()
-        
+
         if found_wounded:
             self.path.reset()
             command["grasper"] = 1
             self.state = self.Activity.GRASPING_WOUNDED
             return None
 
+        if self.iter < 50 * self.identifier:
+            return self.wall_following()
+        
         if (self.pathTracker.isFinish(self.path) and not found_wounded) or (self.is_drone_stuck()):
             self.path.reset()
             frontiers, n_cluster= self.grid.cluster_boundary_points(self.pose.position)
@@ -186,6 +198,7 @@ class MyDroneFirst(DroneAbstract):
             goal = frontiers[random.randint(0,n_cluster-1)]
             self.path_planning([(goal[0] + self.grid.size_area_world[0]/2)/20,(goal[1] +self.grid.size_area_world[1]/2)/20])
             self.state = self.Activity.SEARCHING_WOUNDED
+        
         
         command = self.pathTracker.control(self.pose,self.path,1/30)
 
@@ -210,12 +223,22 @@ class MyDroneFirst(DroneAbstract):
         """
         found_wounded,found_rescue_center,command = self.process_semantic_sensor()
         command["grasper"] = 1
+        
+        if found_rescue_center and self.is_drone_stuck():
+            command["grasper"] = 1
+            self.state = self.Activity.DROPPING_AT_RESCUE_CENTER
+            return command
+        if found_wounded and not self.grasped_entities():
+            command["grasper"] = 1
+            self.state = self.Activity.DROPPING_AT_RESCUE_CENTER
+            return command
+        
         if (self.pathTracker.isFinish(self.path) and not found_rescue_center) or (self.is_drone_stuck()):
             self.path.reset()
             self.path_planning(goal = [(self.pose_initial.position[0] + self.grid.size_area_world[0]/2)/20,(self.pose_initial.position[1] +self.grid.size_area_world[1]/2)/20])
-            self.state = self.Activity.SEARCHING_RESCUE_CENTER
+            
+            #self.state = self.Activity.SEARCHING_RESCUE_CENTER
         
-
         if self.is_inside_return_area:
             self.state = self.Activity.DROPPING_AT_RESCUE_CENTER
             return command
@@ -299,6 +322,7 @@ class MyDroneFirst(DroneAbstract):
 
         if path is None or len(path) == 0:
             print("Problème : Aucun chemin trouvé par RRT !")
+            self.is_found_path = False
             if self.grasped_entities():
                 self.path.reset()
                 self.state = self.Activity.SEARCHING_RESCUE_CENTER
@@ -315,6 +339,7 @@ class MyDroneFirst(DroneAbstract):
         
         self.path._poses = self.path._poses[::-1]
         print("BRAVO : Chemin trouvé par RRT !")
+        self.is_found_path = True
         #self.state = self.Activity.FOLLOW_PATH
         return None
           
@@ -660,8 +685,8 @@ class MyDroneFirst(DroneAbstract):
         self.draw_path(path=self.path, color=(255, 0, 255))
             
         self.draw_coordinate_system()
-        if self.identifier == 0:
-            self.draw_obstacles()
+        """if self.identifier == 0:
+            self.draw_obstacles()"""
         #self.draw_direction()
         #self.draw_antedirection()
         return None

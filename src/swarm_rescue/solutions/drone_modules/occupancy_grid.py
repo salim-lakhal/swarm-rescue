@@ -157,6 +157,8 @@ class OccupancyGrid(Grid):
         return centroids, n_cluster
     
     def update_grid(self, pose: Pose,lidar_values,lidar_rays_angles):
+        if(lidar_values is None or lidar_rays_angles is None):
+            pass
         """
         Bayesian map update with new observation
         lidar : lidar data
