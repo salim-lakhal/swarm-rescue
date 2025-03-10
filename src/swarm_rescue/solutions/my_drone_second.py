@@ -124,6 +124,8 @@ class MyDroneFirst(DroneAbstract):
         if self.is_drone_stuck():
             command = self.wall_following()
             print("Drone bloquée")
+        
+        print(self.state)
         return command
 
 
@@ -171,17 +173,22 @@ class MyDroneFirst(DroneAbstract):
         found_wounded,found_rescue_center,command = self.process_semantic_sensor()
         
         if found_wounded:
+            self.path.reset()
+            command["grasper"] = 1
             self.state = self.Activity.GRASPING_WOUNDED
             return None
 
         if (self.pathTracker.isFinish(self.path) and not found_wounded) or (self.is_drone_stuck()):
+            self.path.reset()
             frontiers, n_cluster= self.grid.cluster_boundary_points(self.pose.position)
             if n_cluster == 0:
                 return self.wall_following()
             goal = frontiers[random.randint(0,n_cluster-1)]
             self.path_planning([(goal[0] + self.grid.size_area_world[0]/2)/20,(goal[1] +self.grid.size_area_world[1]/2)/20])
+            self.state = self.Activity.SEARCHING_WOUNDED
         
         command = self.pathTracker.control(self.pose,self.path,1/30)
+
         return command
     
     def grasping_wounded(self):
@@ -206,8 +213,10 @@ class MyDroneFirst(DroneAbstract):
         if (self.pathTracker.isFinish(self.path) and not found_rescue_center) or (self.is_drone_stuck()):
             self.path.reset()
             self.path_planning(goal = [(self.pose_initial.position[0] + self.grid.size_area_world[0]/2)/20,(self.pose_initial.position[1] +self.grid.size_area_world[1]/2)/20])
+            self.state = self.Activity.SEARCHING_RESCUE_CENTER
         
-        if found_rescue_center:
+
+        if self.is_inside_return_area:
             self.state = self.Activity.DROPPING_AT_RESCUE_CENTER
             return command
         
@@ -306,7 +315,7 @@ class MyDroneFirst(DroneAbstract):
         
         self.path._poses = self.path._poses[::-1]
         print("BRAVO : Chemin trouvé par RRT !")
-        self.state = self.Activity.FOLLOW_PATH
+        #self.state = self.Activity.FOLLOW_PATH
         return None
           
     def conv_obstacle(self,obstacles):
