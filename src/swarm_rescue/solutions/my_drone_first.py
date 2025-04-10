@@ -113,6 +113,11 @@ class MyDroneFirst(DroneAbstract):
         
         # Mise à jour & Affichage de l'Occupancy Grid
         self.grid.update_grid(self.pose,lidar_values,lidar_rays_angles)
+
+        with open("data_ratio_wall.csv",'a') as f:
+            np.savetxt(f, [self.grid.get_visited_ratio()], fmt='%f')
+
+        print(self.grid.get_visited_ratio())    
         command = self.states[self.state]()
         if self.is_drone_stuck(command=command):
             print("Drone bloquée")

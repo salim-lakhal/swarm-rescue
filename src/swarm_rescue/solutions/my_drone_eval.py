@@ -8,4 +8,3 @@ from examples.example_pid_translation import MyDronePidTranslation
 
 class MyDroneEval(MyDroneFirst):
     pass
-

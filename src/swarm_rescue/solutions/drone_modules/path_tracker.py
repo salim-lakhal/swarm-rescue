@@ -46,38 +46,9 @@ class PathTracker:
 
         self.current_target_index = 0  # Indice du point cible actuel
         self.iter_path = 0
-        self.path_done = Path()
         self.error_distance = 0
         self.tolerance = 50
 
-    # Implémenter plus tard
-    def control_with_stanley(self,current_pose:Pose,path:Path,limited_steering_angle,target_index,crosstrack_error,delta_time):
-
-        if path.length() == 0 :#or self.isFinish(path):
-            return {"forward": 0, "lateral": 0, "rotation": 0}
-        
-        if abs(limited_steering_angle - current_pose.orientation)< 0.3:
-            rotation = 0
-        # Utiliser un PID pour la rotation
-        else:
-            rotation = self.pid_steering(limited_steering_angle - current_pose.orientation, delta_time)
-
-        # PID pour avancer et latéral
-        forward = self.pid_forward(-crosstrack_error, delta_time)
-        lateral = 0  # Peut être ajouté selon votre logique
-
-        # Limiter les sorties
-        forward = max(min(forward, 1), -1)
-        rotation = max(min(rotation, 1), -1)
-
-        command = {
-        "forward": forward,
-        "lateral": lateral,
-        "rotation": rotation
-        }
-
-        return command
-    
     # Contrôle d'anle
     def control_angle(self,current_angle,target_angle,delta_time):
         """
@@ -92,64 +63,6 @@ class PathTracker:
         command = {"rotation": rotation}
 
         return command
-    
-    # Implémenter plus tard
-    def pure_pursuit_control(self, current_pose, path, lookahead_distance, delta_time):
-        """
-        Implémentation du contrôle Pure Pursuit.
-        :param current_pose: Pose actuelle du drone (position et orientation).
-        :param path: Trajectoire à suivre.
-        :param lookahead_distance: Distance de regard vers l’avant pour trouver le point cible.
-        :param delta_time: Temps écoulé depuis la dernière mise à jour.
-        :return: Commande du drone (rotation pour suivre la courbure).
-        """
-
-        if path.length() == 0:
-            return {"forward": 0, "lateral": 0, "rotation": 0}
-
-        """# 1️⃣ Trouver le point du chemin le plus proche
-        closest_index = self.current_target_index
-
-        # 2️⃣ Trouver le point cible basé sur le lookahead
-        goal_index = closest_index
-        while goal_index < path.length() - 1:
-            goal_point = path.get(goal_index)
-            distance_to_goal = np.linalg.norm(np.array(goal_point.position) - np.array(current_pose.position))
-
-            if distance_to_goal >= lookahead_distance:
-                break
-            goal_index += 1"""
-
-        # 3️⃣ Transformation du point cible en coordonnées du véhicule
-        goal_pose = path.get(self.current_target_index)
-        self.update_point_index()
-        position_error = np.array(goal_pose.position) - np.array(current_pose.position)
-        
-        theta = current_pose.orientation
-        rotation_matrix = np.array([
-            [np.cos(theta), np.sin(theta)],
-            [-np.sin(theta), np.cos(theta)]
-        ])
-        goal_vehicle_coords = np.dot(rotation_matrix, position_error)
-
-        # 4️⃣ Calcul de la courbure (c = 2 * y / L^2) avec y = coordonnée latérale du point cible
-        x_goal, y_goal = goal_vehicle_coords
-        if abs(x_goal) < 1e-6:  # Éviter une division par zéro
-            curvature = 0
-        else:
-            curvature = (2 * y_goal) / (lookahead_distance ** 2)
-
-        # 5️⃣ Génération de la commande de rotation
-        rotation_command = self.pid_steering.compute(curvature, delta_time)
-        rotation_command = clamp(rotation_command, -1.0, 1.0)
-
-        # 6️⃣ Retour de la commande Pure Pursuit
-        return {
-            "forward": 1.0,  # Peut être ajusté en fonction de la vitesse désirée
-            "lateral": 0,
-            "rotation": rotation_command,
-            "grasper": 0
-        }
 
     def control(self, current_pose : Pose ,path : Path,delta_time):
 
@@ -198,6 +111,53 @@ class PathTracker:
 
         return command
 
+
+    def wall_following_control(self, lidar_values, lidar_angles, K=50, forward_speed=1.0, angular_speed=0.5):
+            """
+            Fonction de contrôle pour le suivi de mur.
+            
+            :param lidar_values: Liste des distances mesurées par le LiDAR.
+            :param lidar_angles: Liste des angles correspondants aux mesures du LiDAR.
+            :param K: Distance constante à maintenir par rapport au mur.
+            :param forward_speed: Vitesse de déplacement vers l'avant.
+            :param angular_speed: Vitesse de rotation.
+            :return: Commande de mouvement pour le drone.
+            """
+            # Initialisation de la commande
+            command = {"forward": 0.0, "lateral": 0.0, "rotation": 0.0}
+
+            # Détection des distances devant et à droite
+            front_dist = min([dist for dist, angle in zip(lidar_values, lidar_angles) if -np.pi/4 < angle < np.pi/4])
+            right_dist = min([dist for dist, angle in zip(lidar_values, lidar_angles) if np.pi/4 < angle < 3*np.pi/4])
+
+            # Erreur de distance par rapport à K
+            error_distance = right_dist - K
+
+            # Contrôleur PID pour la rotation
+            rotation_command = self.pid_steering.compute(error_distance, delta_time=1/30)
+            rotation_command = clamp(rotation_command, -1.0, 1.0)
+
+            # Contrôleur PID pour la vitesse
+            forward_command = self.pid_forward.compute(front_dist - K, delta_time=1/30)
+            forward_command = clamp(forward_command, 0.0, forward_speed)
+
+            # Logique de suivi de mur
+            if front_dist < K:  # Obstacle détecté devant
+                # Ralentir et ajuster la rotation
+                command["forward"] = forward_command * 0.5
+                command["rotation"] = rotation_command
+            elif right_dist > K * 1.2:  # Plus de mur à droite
+                # Tourner à droite pour suivre un nouveau mur
+                command["rotation"] = -angular_speed
+                command["forward"] = forward_command * 0.5
+            else:
+                # Suivre le mur à distance K
+                command["rotation"] = rotation_command
+                command["forward"] = forward_command
+
+            return command
+
+
     def isFinish(self,path):
         if path is None:
             return True
@@ -237,16 +197,6 @@ class PathTracker:
                 min_distance = distance
                 closest_index = i
         return closest_index
-    
-    def update_path_done(self,current_pose):
-        # Pour dessiner le chemin
-        self.iter_path += 1
-        if self.iter_path % 3 == 0:
-            position = np.array([current_pose.position[0],
-                                 current_pose.position[1]])
-            angle = current_pose.orientation
-            pose = Pose(position=position, orientation=angle)
-            self.path_done.append(pose)
     
     def update_current_path_index(self,n):
         self.current_target_index = n
