@@ -607,9 +607,9 @@ class MyDroneFirst(DroneAbstract):
     
     def draw_bottom_layer(self):
         #self.draw_setpoint()
-        self.draw_path(path=self.path, color=(255, 0, 255))
+        #self.draw_path(path=self.path, color=(255, 0, 255))
             
-        self.draw_coordinate_system()
+        #self.draw_coordinate_system()
         #if self.identifier == 0:
             #self.draw_obstacles()
         #self.draw_direction()

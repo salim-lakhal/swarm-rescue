@@ -4,6 +4,7 @@ First assessment controller
 import math
 import arcade
 import random
+import time
 from math import sqrt
 from copy import deepcopy
 from typing import Optional
@@ -27,6 +28,7 @@ from spg_overlay.entities.keyboard_controller import KeyboardController
 from statemachine import StateMachine, State
 from drone_modules.slam_module import SLAMModule
 from drone_modules.exploration_grid import ExplorationGrid
+from drone_modules.communication import Communication
 from drone_modules.path_planner import RRT
 from drone_modules.path_tracker import PathTracker
 from drone_modules.occupancy_grid import OccupancyGrid
@@ -34,6 +36,11 @@ from drone_modules.filter import KalmanFilter
 
 
 class MyDroneFirst(DroneAbstract):
+    class Role(Enum) :
+        SERVEUR = 0
+        LEADER = 1
+        SHEEP = 2
+
     class Activity(Enum):
         """
         All the states of the drone as a state machine
@@ -43,6 +50,7 @@ class MyDroneFirst(DroneAbstract):
         SEARCHING_RESCUE_CENTER = 2
         DROPPING_AT_RESCUE_CENTER = 3
         INITIAL = 4
+        EXECUTE = 5
 
     def __init__(self,
                  identifier: Optional[int] = None,
@@ -58,6 +66,7 @@ class MyDroneFirst(DroneAbstract):
         self.grid = OccupancyGrid(size_area_world=self.size_area, resolution=20)
         self.explorationGrid = ExplorationGrid(drone=self,grid=self.grid)
         self.pathTracker = PathTracker()
+        self.communication = Communication(identifier)
 
 
         # Variable drone
@@ -85,7 +94,9 @@ class MyDroneFirst(DroneAbstract):
         self.fps_display = FpsDisplay(period_display=1)
         self.timer = Timer(start_now=True)
         
-        
+        # Role du robot
+        self.role = self.Role.LEADER
+        self.id_to_follow = None
 
         # Machine à états
         self.state = self.Activity.INITIAL
@@ -93,13 +104,15 @@ class MyDroneFirst(DroneAbstract):
                     self.Activity.GRASPING_WOUNDED: self.grasping_wounded,
                     self.Activity.SEARCHING_RESCUE_CENTER: self.searching_rescue_center,
                     self.Activity.DROPPING_AT_RESCUE_CENTER: self.dropping_at_rescue_center,
-                    self.Activity.INITIAL: self.initial
+                    self.Activity.INITIAL: self.initial,
+                    self.Activity.EXECUTE: self.execute
                     }
         self.state_machine = [self.Activity.SEARCHING_WOUNDED,
                             self.Activity.GRASPING_WOUNDED,
                             self.Activity.SEARCHING_RESCUE_CENTER,
                             self.Activity.DROPPING_AT_RESCUE_CENTER,
-                            self.Activity.INITIAL
+                            self.Activity.INITIAL,
+                            self.Activity.EXECUTE,
                             ]
     
 
@@ -114,12 +127,10 @@ class MyDroneFirst(DroneAbstract):
         
         self.update()
 
-        if self.is_drone_stuck() or (np.linalg.norm(self.pose.position) < 0.01):
-            return self.wall_following()
-        
-        print(str(self.identifier) + ":" + str(self.state))
-        
         command = self.states[self.state]()
+
+        print(str(self.identifier) + " : " + str(self.drone_health))
+        print(str(self.identifier) + " : " + str(self.state))
         
         self.pose_prec.position = self.pose.position
 
@@ -134,16 +145,19 @@ class MyDroneFirst(DroneAbstract):
         self.pose.orientation = self.measured_compass_angle()
         self.speed = self.measured_velocity()
 
-        _,self.collision = self.process_lidar_sensor(self.lidar())
+        _,self.collision = self.pathTracker.process_lidar_sensor(self.lidar())
         self.found_drone,_ = self.process_communication_sensor()
         self.found_wounded, self.found_rescue_center, _ = self.process_semantic_sensor()
         self.is_path_finish = self.pathTracker.isFinish(self.path)
 
+        self.communication.update(self.communicator,self.pose)
+
         if self.is_path_finish:
             self.path.reset()
+        
 
         # Mise à jour & Affichage de l'Occupancy Grid
-        self.grid.update_grid(self.pose,self.lidar_values(),self.lidar_rays_angles())
+        self.grid.update_grid(self.pose,self.lidar_values(),self.lidar_rays_angles())       
         return None
     
     def define_message_for_all(self):
@@ -164,12 +178,62 @@ class MyDroneFirst(DroneAbstract):
         Initial state
         """
         self.pose_initial.position = self.pose.position
+        goal = [-100, 118,0]
+
+        if self.identifier % 2 == 1:
+            self.role = self.Role.SHEEP
+            self.id_to_follow = self.identifier - 1  # suit le robot pair précédent
+            self.state = self.Activity.SEARCHING_WOUNDED
+        else:
+            self.role = self.Role.LEADER
+            self.state = self.Activity.SEARCHING_WOUNDED
+
+        #self.path_planning([(goal[0] + self.size_area[0]/2)/20,(goal[1] +self.size_area[1]/2)/20])
+        #self.path._poses = np.array([[295, 118,0],[-100, 118,0]])
         command = {"forward": 0.0,
                 "lateral": 0.0,
                 "rotation": 0.0,
                 "grasper":0}
-        self.state = self.Activity.SEARCHING_WOUNDED
+        #command = self.pathTracker.control(self.pose,self.path,1/30,self.lidar())
 
+        return command
+    # ETAT DU DRONE SUIVEUR
+    def execute(self):
+
+        """if self.is_path_finish :
+            self.state = self.Activity.INITIAL"""
+        
+
+        leader_position = self.communication.getGPSData(self.id_to_follow)
+
+        if leader_position is None :
+            return {"forward": 0.0,
+                "lateral": 0.0,
+                "rotation": 0.0,
+                "grasper":0}
+        
+        command = self.pathTracker.follow_target(self.pose,leader_position)
+
+        """if self.communicator :
+            received_messages = self.communicator.received_messages
+            min_dist1 = 10000
+
+            for msg in received_messages:
+                message = msg[1]
+                other_id = message[0]
+                coordinate = message[1]
+                (other_position, other_angle) = coordinate
+
+                command = self.pathTracker.follow_target(self.pose,other_position)"""
+        
+
+        #command = self.pathTracker.handleCollision(command)
+
+        #command = self.pathTracker.control(self.pose,self.path,1/30,self.lidar())
+        """command = {"forward": 0.0,
+                "lateral": 0.0,
+                "rotation": 0.0,
+                "grasper":0}"""
         return command
     
     def searching_wounded(self):
@@ -190,17 +254,16 @@ class MyDroneFirst(DroneAbstract):
         if self.iter < 50 * self.identifier:
             return self.wall_following()
         
-        if (self.is_path_finish and not self.found_wounded) or (self.is_drone_stuck()):
+        if (self.is_path_finish and not self.found_wounded and self.iter > 5 * (self.identifier+1)): #or (self.is_drone_stuck()):
             frontiers, n_cluster= self.grid.cluster_boundary_points(self.pose.position)
-            if n_cluster == 0 or self.grid.get_visited_ratio() > 0.95:
+            if n_cluster == 0 or self.grid.get_visited_ratio() > 0.95 or (frontiers is None):
                 return self.wall_following()
             goal = frontiers[random.randint(0,n_cluster-1)]
             self.path_planning([(goal[0] + self.size_area[0]/2)/20,(goal[1] +self.size_area[1]/2)/20])
-            #self.path_planning2([goal[0] ,goal[1]])
             self.state = self.Activity.SEARCHING_WOUNDED
         
         
-        command = self.pathTracker.control(self.pose,self.path,1/30)
+        command = self.pathTracker.control(self.pose,self.path,1/30,self.lidar(),lidar_values=self.lidar_values())
 
         return command
     
@@ -230,7 +293,7 @@ class MyDroneFirst(DroneAbstract):
             self.state = self.Activity.GRASPING_WOUNDED
             return command
         
-        if (self.is_path_finish and self.grasped_entities()) or (self.is_drone_stuck()):
+        if (self.is_path_finish and self.grasped_entities()):
             self.path.reset()
             self.path_planning(goal = [(self.pose_initial.position[0] + self.grid.size_area_world[0]/2)/20,(self.pose_initial.position[1] +self.grid.size_area_world[1]/2)/20]) 
         
@@ -239,7 +302,8 @@ class MyDroneFirst(DroneAbstract):
             self.state = self.Activity.DROPPING_AT_RESCUE_CENTER
             return command
         
-        command = self.pathTracker.control(self.pose,self.path,1/30)
+        command = self.pathTracker.control(self.pose,self.path,1/30,self.lidar())
+
         command["grasper"] = 1
         
         return command
@@ -270,26 +334,6 @@ class MyDroneFirst(DroneAbstract):
 
             return command
     
-    def is_drone_stuck(self,speed = 1000,lidar_values = np.zeros(181),distance_threshold=20, speed_threshold=0.5):
-        """
-        Détermine si le drone est bloqué contre un mur.
-
-        :param self.lidar_values(): Distance mesurée par le LIDAR (en mètres).
-        :param speed: Vitesse actuelle du drone (en m/s).
-        :param position_history: Historique des positions du drone (liste de tuples (x, y)).
-        :param distance_threshold: Seuil de distance pour considérer que le drone est proche d'un mur (en mètres).
-        :param speed_threshold: Seuil de vitesse pour considérer que le drone est immobile (en m/s).
-        :param position_threshold: Seuil de variation de position pour considérer que le drone ne bouge pas (en mètres).
-        :return: True si le drone est bloqué, False sinon.
-        """
-        # 1. Vérifier si le drone est proche d'un mur
-        if min(self.lidar_values()) < distance_threshold:
-            # 2. Vérifier si la vitesse est très faible
-            if np.linalg.norm(self.speed) < speed_threshold:
-                # 3. Vérifier si la position n'a pas changé significativement
-                return True
-        
-        return False
 
 ##################
 #  BASE FUNCTION #              
@@ -297,8 +341,8 @@ class MyDroneFirst(DroneAbstract):
 
     def path_planning(self,goal):
         start = [(self.pose.position[0] + self.size_area[0]/2)/20, (self.pose.position[1]+ self.size_area[1]/2)/20]
-        obstacles = self.grid.get_obstacles()
-        obstacle_list = self.conv_obstacle(obstacles)
+        #obstacles = self.grid.get_obstacles()
+        obstacle_list = self.grid.get_obstacles_grid()
         play_area = [0,self.size_area[0]/20,0,self.size_area[1]/20]
 
         path_planning = RRT(start=start,
@@ -332,16 +376,9 @@ class MyDroneFirst(DroneAbstract):
         print("BRAVO "+ str(self.identifier) +": Chemin trouvé par RRT !")
         self.is_found_path = True
         return None
-          
-    def conv_obstacle(self,obstacles):
-            converted_obstacles = []
-            for obstacle in obstacles:
-                converted_obstacle = (((obstacle[0]+self.size_area[0]/2) / 20), ((obstacle[1]+self.size_area[1]/2) / 20), 0.1) #0.1
-                converted_obstacles.append(converted_obstacle)
-            return converted_obstacles
 
     def process_lidar_sensor(self, the_lidar_sensor): 
-        command = {"forward": 1.0,
+        command = {"forward": 0.0,
                    "lateral": 0.0,
                    "rotation": 0.0}
         angular_vel_controller = 1.0
@@ -383,7 +420,7 @@ class MyDroneFirst(DroneAbstract):
 
         # If near a wall then 'collision' is True and the drone tries to turn its back to the wall
         collision = False
-        if size != 0 and min_dist < 50:
+        if size != 0 and min_dist < 30:
             collision = True
             if near_angle > 0:
                 command["rotation"] = -angular_vel_controller
@@ -575,8 +612,35 @@ class MyDroneFirst(DroneAbstract):
         if found_rescue_center and is_near:
             command["forward"] = 0.0
             command["rotation"] = -1.0
+        
+        """if not self.is_inside_return_area:
+            forward, lateral = self.pathTracker.handleCollision(command["forward"],command["lateral"] ,self.lidar(),self.path)
+            command["forward"] = forward
+            command["lateral"] = lateral"""
+
 
         return found_wounded, found_rescue_center, command
+
+    def is_drone_stuck(self,speed = 1000,lidar_values = np.zeros(181),distance_threshold=20, speed_threshold=0.5):
+        """
+        Détermine si le drone est bloqué contre un mur.
+
+        :param self.lidar_values(): Distance mesurée par le LIDAR (en mètres).
+        :param speed: Vitesse actuelle du drone (en m/s).
+        :param position_history: Historique des positions du drone (liste de tuples (x, y)).
+        :param distance_threshold: Seuil de distance pour considérer que le drone est proche d'un mur (en mètres).
+        :param speed_threshold: Seuil de vitesse pour considérer que le drone est immobile (en m/s).
+        :param position_threshold: Seuil de variation de position pour considérer que le drone ne bouge pas (en mètres).
+        :return: True si le drone est bloqué, False sinon.
+        """
+        # 1. Vérifier si le drone est proche d'un mur
+        if min(self.lidar_values()) < distance_threshold:
+            # 2. Vérifier si la vitesse est très faible
+            if np.linalg.norm(self.speed) < speed_threshold:
+                # 3. Vérifier si la position n'a pas changé significativement
+                return True
+        
+        return False
 
 ##################
 #  DRAW FUNCTION #              
@@ -587,9 +651,9 @@ class MyDroneFirst(DroneAbstract):
         self.draw_path(path=self.path, color=(255, 0, 255))
             
         self.draw_coordinate_system()
-        if self.identifier == 0:
+        #if self.identifier == 0:
             #self.draw_clusters()
-            self.draw_obstacles()
+            #self.draw_obstacles()
         #self.draw_direction()
         #self.draw_antedirection()
         return None
@@ -683,7 +747,8 @@ class MyDroneFirst(DroneAbstract):
         :param square_size: Taille des carrés représentant les obstacles (en pixels), par défaut 5.
         """
         # Obtenir la liste des obstacles en coordonnées du monde réel
-        obstacles = self.grid.extract_exploration_boundaries(self.pose.position)
+        obstacles = self.grid.find_frontier() #self.grid.extract_exploration_boundaries(self.pose.position)
+        
 
         # Convertir les coordonnées du monde réel en pixels pour dessiner
         width, height = self.size_area  # Dimensions de la carte en pixels

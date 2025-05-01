@@ -95,6 +95,12 @@ class OccupancyGrid(Grid):
         # threshold values
         self.grid = np.clip(self.grid, THRESHOLD_MIN, THRESHOLD_MAX)
 
+        # Créer une image binaire où les zones explorées sont 255 et les non explorées sont 0
+        self.binary_image = np.where(self.grid != 0, 255, 0).astype(np.uint8).T
+
+        #self.display_grid(pose)
+
+    def display_grid(self,pose):
         # compute zoomed grid for displaying
         self.zoomed_grid = self.grid.copy()
         new_zoomed_size = (int(self.size_area_world[1] * 0.5),
@@ -102,8 +108,6 @@ class OccupancyGrid(Grid):
         self.zoomed_grid = cv2.resize(self.zoomed_grid, new_zoomed_size,
                                       interpolation=cv2.INTER_NEAREST)
         
-        # Créer une image binaire où les zones explorées sont 255 et les non explorées sont 0
-        self.binary_image = np.where(self.grid != 0, 255, 0).astype(np.uint8).T
         
         #config_grid = np.where(self.grid > 2, 255, 0).astype(np.uint8)
         config_image = cv2.resize(np.where(self.grid > 2, 255, 0).astype(np.uint8),new_zoomed_size,interpolation=cv2.INTER_NEAREST)
@@ -126,7 +130,7 @@ class OccupancyGrid(Grid):
         # Loop through each cell in the grid
         for x in range(1, self.grid.shape[0] - 1):  # Exclude borders to avoid out-of-bounds
             for y in range(1, self.grid.shape[1] - 1):
-                if self.grid[x, y] <= -4.0:  # Free cell
+                if self.grid[x, y] <= -4.0 :#-4.0:  # Free cell
                     # Check if any adjacent cell is unknown (0)
                     neighbors = self.grid[x-1:x+2, y-1:y+2]
                     if np.any(neighbors == 0):  # There is an unknown cell around
@@ -173,7 +177,11 @@ class OccupancyGrid(Grid):
         :return: Liste des centroïdes des clusters et le nombre de clusters retenus.
         """
         # Extraire les points de frontière
-        data = self.extract_exploration_boundaries(robot_position)
+        #data = self.extract_exploration_boundaries(robot_position)
+        data = self.find_frontier()
+
+        if data is None :
+            return ([],0)
 
         # Appliquer DBSCAN
         db = DBSCAN(eps=eps, min_samples=min_samples).fit(data)
@@ -252,7 +260,8 @@ class OccupancyGrid(Grid):
         for x in range (0, self.grid.shape[0] - 1):
             for y in range(0, self.grid.shape[1] - 1):
                 if self.grid[x, y] > 0:
-                   obstacles.append((x,y,0.1))
+                   x_world,y_world= self._conv_grid_to_world(x,y)
+                   obstacles.append((((x_world+self.size_area_world[0]/2) / 20), ((y_world+self.size_area_world[1]/2) / 20), 0.1) )
         return obstacles
     
     def get_visited_ratio(self):

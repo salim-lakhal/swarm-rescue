@@ -59,7 +59,7 @@ class MyMapMedium01(MapAbstract):
         self._wounded_persons: List[WoundedPerson] = []
 
         # POSITIONS OF THE DRONES
-        self._number_drones = 10
+        self._number_drones = 1 #10
         # They are positioned in a square whose side size depends on the total number of drones.
         start_area_drones = (-580, -400)
         nb_per_side = math.ceil(math.sqrt(float(self._number_drones)))

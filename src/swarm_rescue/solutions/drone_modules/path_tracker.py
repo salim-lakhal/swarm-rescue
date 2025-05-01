@@ -1,10 +1,12 @@
 import math
 import numpy as np
+import time
 #from simple_pid import PID
 from spg_overlay.utils.utils import normalize_angle
 from spg_overlay.utils.utils import clamp
 from spg_overlay.utils.path import Path
 from spg_overlay.utils.pose import Pose
+from spg_overlay.utils.timer import Timer
 
 class PID:
     """
@@ -49,6 +51,11 @@ class PathTracker:
         self.error_distance = 0
         self.tolerance = 50
 
+        self.collision_cooldown = 5
+        self.last_collision_time = 0
+
+        self.lidar = None
+
     # Contrôle d'anle
     def control_angle(self,current_angle,target_angle,delta_time):
         """
@@ -64,7 +71,9 @@ class PathTracker:
 
         return command
 
-    def control(self, current_pose : Pose ,path : Path,delta_time):
+    def control(self, current_pose : Pose ,path : Path,delta_time,lidar,velocity = np.array([1,1]),lidar_values=np.zeros(181),):
+
+        self.lidar = lidar
 
         """Aller d'un point A à B à l'aide d'un contrôleur PID"""
 
@@ -72,9 +81,6 @@ class PathTracker:
         if path.length() == 0 or self.isFinish(path):
             return {"forward": 0, "lateral": 0, "rotation": 0}
         
-        
-        #self.update_path_done(current_pose)
-
         theta = current_pose.orientation
 
         # Matrice de rotation
@@ -96,22 +102,125 @@ class PathTracker:
         lateral = self.pid_lateral.compute(target_position_robot[1], delta_time)
         rotation = 0
 
-
-
         # Limit PID outputs to [-1, 1]
-
         forward = max(min(forward, 1), -1)
         lateral = max(min(lateral, 1), -1)
+        
+        #current_time = time.time()
+        #command,collision = self.process_lidar_sensor(lidar)
+
+
+        """if collision :
+            if (current_time - self.last_collision_time > self.collision_cooldown):
+                self.last_collision_time = current_time
+                self.finish(path)
+                #command = {"forward": 0, "lateral": 0, "rotation": 0}
+            return command # Aller contre le mur mettre ça dans attenuation"""
 
         command = {"forward": forward,
             "lateral": lateral,
             "rotation": rotation}
+        
+        command = self.handleCollision(command,lidar,path)
         
         self.update_point_index()
 
         return command
 
 
+    def follow_target(self, current_pose: Pose, target_position, d_suivi=20.0):
+        import numpy as np
+
+        # 1. Position actuelle et orientation
+        x, y = current_pose.position
+        theta = current_pose.orientation  # en radians
+
+        # 2. Vecteur vers la cible (dans B0)
+        dx = target_position[0] - x
+        dy = target_position[1] - y
+        v_global = np.array([dx, dy])
+        distance = np.linalg.norm(v_global)
+
+        if distance < 1e-6:
+            v_global = np.array([0.0, 0.0])
+            distance = 0.0
+
+        # 3. Transformation du vecteur dans la base locale B1
+        R = np.array([
+            [np.cos(-theta), -np.sin(-theta)],
+            [np.sin(-theta),  np.cos(-theta)]
+        ])
+        v_local = R @ v_global
+
+        # 4. Générer la commande forward/lateral avec atténuation de vitesse selon la distance
+        if distance > d_suivi:
+            v_local = v_local / distance  # direction unitaire
+            intensity = (distance - d_suivi) / d_suivi  # plus on est loin, plus on va vite
+            intensity = min(intensity, 1.0)
+            forward = v_local[0] * intensity
+            lateral = v_local[1] * intensity
+        else:
+            forward = 0.0
+            lateral = 0.0
+
+        # 5. Atténuation selon les obstacles détectés par le lidar
+        #forward, lateral = self.attenuation(forward, lateral)
+
+        command = {"forward": forward, "lateral": lateral}
+        return command
+    
+    def handleCollision(self,command,lidar,path):
+        
+        # Atténuation
+
+        u = np.array([command["forward"],command["lateral"]])
+
+        values = lidar.get_sensor_values()
+        ray_angles = lidar.ray_angles
+        size = lidar.resolution
+        seuil_ralentir = 70
+        seuil_stop = 25
+        k = 3
+        current_time = time.time()
+
+        if size != 0:
+            d = min(values)
+            # near_angle_raw : angle with the nearest distance
+            alpha = ray_angles[np.argmin(values)]
+            v_obs = np.array([np.cos(alpha),np.sin(alpha)])
+            u_parallele = (u @ v_obs)*v_obs
+            u_perp = u - u_parallele
+        
+        attenuation = min(1.0, np.exp(- (1 - d / seuil_ralentir) * k)) #min(1.0,(d/seuil_ralentir)**2)
+
+        # Fonction d'atténuation non linéaire
+        if d <= seuil_stop:
+            
+            if (current_time - self.last_collision_time > self.collision_cooldown):
+                self.last_collision_time = current_time
+                self.finish(path)
+
+            attenuation = -0.5  # frein ou marche arrière
+
+            attenuation = 0.0  # on bloque l'avancement vers l'obstacle
+
+            # === Nouvelle stratégie : diriger vers zone la plus libre ===
+            alpha_max = ray_angles[np.argmax(values)]
+            v_free = np.array([np.cos(alpha_max), np.sin(alpha_max)])
+
+            redirection_strength = 1.0  # intensité de la redirection
+            u = redirection_strength * v_free  # on oriente totalement vers la zone libre
+        else :
+            u = attenuation*u_parallele + u_perp
+
+        forward = max(min(u[0], 1), -1)
+        lateral = max(min(u[1], 1), -1)
+
+        command["forward"] = forward
+        command["lateral"] = lateral
+
+        return command
+        
     def wall_following_control(self, lidar_values, lidar_angles, K=50, forward_speed=1.0, angular_speed=0.5):
             """
             Fonction de contrôle pour le suivi de mur.
@@ -157,6 +266,72 @@ class PathTracker:
 
             return command
 
+    def process_lidar_sensor(self, the_lidar_sensor): 
+        command = {"forward": 1.0,
+                   "lateral": 0.0,
+                   "rotation": 0.0}
+        angular_vel_controller = 1.0
+        seuil_ralentir = 200
+        seuil_stop = 30
+
+        values = the_lidar_sensor.get_sensor_values()
+
+        if values is None:
+            return command, False
+
+        ray_angles = the_lidar_sensor.ray_angles
+        size = the_lidar_sensor.resolution
+
+        far_angle_raw = 0
+        near_angle_raw = 0
+        min_dist = 1000
+        if size != 0:
+            # far_angle_raw : angle with the longer distance
+            far_angle_raw = ray_angles[np.argmax(values)]
+            min_dist = min(values)
+            # near_angle_raw : angle with the nearest distance
+            near_angle_raw = ray_angles[np.argmin(values)]
+
+        far_angle = far_angle_raw
+        # If far_angle_raw is small then far_angle = 0
+        if abs(far_angle) < 1 / 180 * np.pi:
+            far_angle = 0.0
+
+        near_angle = near_angle_raw
+        far_angle = normalize_angle(far_angle)
+
+        # The drone will turn toward the zone with the more space ahead
+        if size != 0:
+            if far_angle > 0:
+                command["rotation"] = angular_vel_controller
+            elif far_angle == 0:
+                command["rotation"] = 0
+            else:
+                command["rotation"] = -angular_vel_controller
+
+        # If near a wall then 'collision' is True and the drone tries to turn its back to the wall
+        collision = False
+        # Calcul projection avant/arrière
+        front_projection = np.cos(near_angle)  # +1 si pile devant, 0 si latéral, -1 derrière
+        if size != 0 and min_dist < seuil_stop:
+            collision = True
+
+            # Éloignement proportionnel, dirigé par la position angulaire
+            command["forward"] = - front_projection * (1.0 - min_dist / seuil_stop)  # recule si obstacle en face
+            command["lateral"] = - np.sin(near_angle) * (1.0 - min_dist / seuil_stop)  # pousse latéralement si côté
+
+            if near_angle > 0:
+                command["rotation"] = -angular_vel_controller
+            else:
+                command["rotation"] = angular_vel_controller
+        elif size != 0 and min_dist < seuil_ralentir:
+            # Distance proche, on ralentit proportionnellement
+            facteur = (min_dist - seuil_stop) / (seuil_ralentir - seuil_stop)  # de 0 à   # de 0 (près) à 1 (loin)
+            command["forward"] = front_projection * facteur  # ralenti en approche si obstacle en face
+            command["lateral"] = np.sin(near_angle) * facteur  # ajuste latéral si besoin
+            command["rotation"] = 0.0
+
+        return command, collision
 
     def isFinish(self,path):
         if path is None:
@@ -165,6 +340,9 @@ class PathTracker:
              self.current_target_index = 0
              return True
         return False
+    
+    def finish(self,path):
+        self.current_target_index = path.length()
     
     def isFinishPose(self,path : Path,pose : Pose):
         if path is None:
