@@ -22,6 +22,7 @@ class Communication:
     def update(self,communicator,pose : Pose):
         self.pose = pose
         self.communicator = communicator
+
     
     def findNearestDrone(self):
         # Calcul du plus proche voisin
@@ -38,6 +39,11 @@ class Communication:
                 min_dist = dist
                 nearest_id = sender_id
         return nearest_id
+    
+    def asignfrontier(self,msg):
+        # Retourne un dictionnaire de frontrière avec un id et la coordonnée de la frontiére à explorer
+
+        return {"0":(10,10),"1":None}
     
     def getMessage(self, robot_id):
         if self.communicator is None:

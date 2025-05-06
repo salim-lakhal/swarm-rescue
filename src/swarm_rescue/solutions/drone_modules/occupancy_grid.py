@@ -182,6 +182,8 @@ class OccupancyGrid(Grid):
 
         if data is None :
             return ([],0)
+        elif np.size(data) == 1:
+            return ([],0)
 
         # Appliquer DBSCAN
         db = DBSCAN(eps=eps, min_samples=min_samples).fit(data)

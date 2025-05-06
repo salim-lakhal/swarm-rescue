@@ -37,7 +37,6 @@ from drone_modules.filter import KalmanFilter
 
 class MyDroneFirst(DroneAbstract):
     class Role(Enum) :
-        SERVEUR = 0
         LEADER = 1
         SHEEP = 2
 
@@ -51,6 +50,8 @@ class MyDroneFirst(DroneAbstract):
         DROPPING_AT_RESCUE_CENTER = 3
         INITIAL = 4
         EXECUTE = 5
+        SERVER = 6
+        SLEEP = 7
 
     def __init__(self,
                  identifier: Optional[int] = None,
@@ -72,6 +73,8 @@ class MyDroneFirst(DroneAbstract):
         # Variable drone
         self.iter = 0
         self.grasp = 0
+        self.list_wounded = set()
+        self.frontiers = []
 
         self.is_found_path = False
         self.collision = False
@@ -105,7 +108,9 @@ class MyDroneFirst(DroneAbstract):
                     self.Activity.SEARCHING_RESCUE_CENTER: self.searching_rescue_center,
                     self.Activity.DROPPING_AT_RESCUE_CENTER: self.dropping_at_rescue_center,
                     self.Activity.INITIAL: self.initial,
-                    self.Activity.EXECUTE: self.execute
+                    self.Activity.EXECUTE: self.execute,
+                    self.Activity.SERVER: self.server,
+                    self.Activity.SLEEP: self.sleep,
                     }
         self.state_machine = [self.Activity.SEARCHING_WOUNDED,
                             self.Activity.GRASPING_WOUNDED,
@@ -113,6 +118,8 @@ class MyDroneFirst(DroneAbstract):
                             self.Activity.DROPPING_AT_RESCUE_CENTER,
                             self.Activity.INITIAL,
                             self.Activity.EXECUTE,
+                            self.Activity.SERVER,
+                            self.Activity.SLEEP,
                             ]
     
 
@@ -127,9 +134,10 @@ class MyDroneFirst(DroneAbstract):
         
         self.update()
 
+
         command = self.states[self.state]()
 
-        print(str(self.identifier) + " : " + str(self.drone_health))
+        #print(self.communicator._received_messages)
         print(str(self.identifier) + " : " + str(self.state))
         
         self.pose_prec.position = self.pose.position
@@ -164,8 +172,12 @@ class MyDroneFirst(DroneAbstract):
         """
         Define the message, the drone will send to and receive from other surrounding drones.
         """
+
         msg_data = (self.identifier,
-                    (self.measured_gps_position(), self.measured_compass_angle()))
+                    (self.measured_gps_position(), self.measured_compass_angle()),
+                    self.list_wounded,
+                    self.frontiers
+                    )
         return msg_data
 
 
@@ -179,15 +191,11 @@ class MyDroneFirst(DroneAbstract):
         """
         self.pose_initial.position = self.pose.position
         goal = [-100, 118,0]
-
-        if self.identifier % 2 == 1:
-            self.role = self.Role.SHEEP
-            self.id_to_follow = self.identifier - 1  # suit le robot pair précédent
-            self.state = self.Activity.SEARCHING_WOUNDED
+        if self.identifier == 0:
+            self.state = self.Activity.SEARCHING_WOUNDED # SERVER
         else:
             self.role = self.Role.LEADER
             self.state = self.Activity.SEARCHING_WOUNDED
-
         #self.path_planning([(goal[0] + self.size_area[0]/2)/20,(goal[1] +self.size_area[1]/2)/20])
         #self.path._poses = np.array([[295, 118,0],[-100, 118,0]])
         command = {"forward": 0.0,
@@ -197,44 +205,42 @@ class MyDroneFirst(DroneAbstract):
         #command = self.pathTracker.control(self.pose,self.path,1/30,self.lidar())
 
         return command
-    # ETAT DU DRONE SUIVEUR
-    def execute(self):
+    
+    def server(self):
 
-        """if self.is_path_finish :
-            self.state = self.Activity.INITIAL"""
-        
 
-        leader_position = self.communication.getGPSData(self.id_to_follow)
 
-        if leader_position is None :
-            return {"forward": 0.0,
+        return {"forward": 0.0,
+                "lateral": 0.0,
+                "rotation": 0.0,
+                "grasper":0}
+    
+    def sleep(self):
+
+        # Passe à l'état execute dés qu'il reçoit un signal et la position du wounded à chercher
+
+        return {"forward": 0.0,
                 "lateral": 0.0,
                 "rotation": 0.0,
                 "grasper":0}
         
-        command = self.pathTracker.follow_target(self.pose,leader_position)
+    # ETAT DU DRONE QUI VA VERS LE BLESSER FAIRE COMME SEARCHING RESCUE CENTER MAIS PARTIR VERS LE BLESSE
+    def execute(self):
 
-        """if self.communicator :
-            received_messages = self.communicator.received_messages
-            min_dist1 = 10000
+        if self.found_wounded:
+            self.path.reset()
+            command["grasper"] = 1
+            self.state = self.Activity.GRASPING_WOUNDED
+            return None
 
-            for msg in received_messages:
-                message = msg[1]
-                other_id = message[0]
-                coordinate = message[1]
-                (other_position, other_angle) = coordinate
-
-                command = self.pathTracker.follow_target(self.pose,other_position)"""
         
 
-        #command = self.pathTracker.handleCollision(command)
-
-        #command = self.pathTracker.control(self.pose,self.path,1/30,self.lidar())
-        """command = {"forward": 0.0,
+        command = {"forward": 0.0,
                 "lateral": 0.0,
                 "rotation": 0.0,
-                "grasper":0}"""
+                "grasper":0}
         return command
+    
     
     def searching_wounded(self):
         """
@@ -255,10 +261,10 @@ class MyDroneFirst(DroneAbstract):
             return self.wall_following()
         
         if (self.is_path_finish and not self.found_wounded and self.iter > 5 * (self.identifier+1)): #or (self.is_drone_stuck()):
-            frontiers, n_cluster= self.grid.cluster_boundary_points(self.pose.position)
-            if n_cluster == 0 or self.grid.get_visited_ratio() > 0.95 or (frontiers is None):
+            self.frontiers, n_cluster= self.grid.cluster_boundary_points(self.pose.position)
+            if n_cluster == 0 or self.grid.get_visited_ratio() > 0.95 or (self.frontiers is None):
                 return self.wall_following()
-            goal = frontiers[random.randint(0,n_cluster-1)]
+            goal = self.frontiers[random.randint(0,n_cluster-1)]
             self.path_planning([(goal[0] + self.size_area[0]/2)/20,(goal[1] +self.size_area[1]/2)/20])
             self.state = self.Activity.SEARCHING_WOUNDED
         
@@ -651,8 +657,8 @@ class MyDroneFirst(DroneAbstract):
         self.draw_path(path=self.path, color=(255, 0, 255))
             
         self.draw_coordinate_system()
-        #if self.identifier == 0:
-            #self.draw_clusters()
+        """if self.identifier == 0:
+            self.draw_clusters()"""
             #self.draw_obstacles()
         #self.draw_direction()
         #self.draw_antedirection()
