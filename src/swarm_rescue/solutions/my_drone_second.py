@@ -33,7 +33,7 @@ from drone_modules.path_planner import RRT
 from drone_modules.path_tracker import PathTracker
 from drone_modules.occupancy_grid import OccupancyGrid
 from drone_modules.filter import KalmanFilter
-
+from drone_modules.semantic_manager import SemanticManager
 
 class MyDroneFirst(DroneAbstract):
     class Role(Enum) :
@@ -68,13 +68,17 @@ class MyDroneFirst(DroneAbstract):
         self.explorationGrid = ExplorationGrid(drone=self,grid=self.grid)
         self.pathTracker = PathTracker()
         self.communication = Communication(identifier)
+        self.semanticManager = SemanticManager(identifier)
 
 
         # Variable drone
         self.iter = 0
         self.grasp = 0
-        self.list_wounded = set()
+        self.list_wounded = []
+        self.list_wounded_save = []
         self.frontiers = []
+        self.wounded_cooldown = 3
+        self.last_wounded_time = 0
 
         self.is_found_path = False
         self.collision = False
@@ -138,7 +142,11 @@ class MyDroneFirst(DroneAbstract):
         command = self.states[self.state]()
 
         #print(self.communicator._received_messages)
-        print(str(self.identifier) + " : " + str(self.state))
+        #print(str(self.identifier) + " : " + str(self.state))
+        """print("Nombre blessé détecté " + str(self.identifier) +":"+ str(len(self.list_wounded)))
+        print("List Grasped :"+ str(self.identifier) +":"+str(self.list_wounded))
+        print("Save Grasped :"+ str(self.identifier) +":"+str(self.list_wounded_save))"""
+
         
         self.pose_prec.position = self.pose.position
 
@@ -149,8 +157,8 @@ class MyDroneFirst(DroneAbstract):
         self.timer.restart()  # Redémarrage pour le prochain cycle
         self.iter += 1
 
-        self.pose.position = self.measured_gps_position()
-        self.pose.orientation = self.measured_compass_angle()
+        self.pose.position = self.true_position()
+        self.pose.orientation = self.true_angle()
         self.speed = self.measured_velocity()
 
         _,self.collision = self.pathTracker.process_lidar_sensor(self.lidar())
@@ -158,7 +166,12 @@ class MyDroneFirst(DroneAbstract):
         self.found_wounded, self.found_rescue_center, _ = self.process_semantic_sensor()
         self.is_path_finish = self.pathTracker.isFinish(self.path)
 
-        self.communication.update(self.communicator,self.pose)
+        self.communication.update(self.communicator, self.pose)
+
+        self.semanticManager.update(semantic_values=self.semantic_values(),list_wounded=self.list_wounded,grasped_entities=self.grasped_entities(),communicator = self.communicator, pose=self.pose)
+        self.list_wounded = self.semanticManager.getWoundedList()
+        self.list_wounded_save = self.semanticManager.getWoundedSaveList()
+
 
         if self.is_path_finish:
             self.path.reset()
@@ -176,6 +189,7 @@ class MyDroneFirst(DroneAbstract):
         msg_data = (self.identifier,
                     (self.measured_gps_position(), self.measured_compass_angle()),
                     self.list_wounded,
+                    self.list_wounded_save,
                     self.frontiers
                     )
         return msg_data
@@ -192,7 +206,7 @@ class MyDroneFirst(DroneAbstract):
         self.pose_initial.position = self.pose.position
         goal = [-100, 118,0]
         if self.identifier == 0:
-            self.state = self.Activity.SEARCHING_WOUNDED # SERVER
+            self.state = self.Activity.SERVER
         else:
             self.role = self.Role.LEADER
             self.state = self.Activity.SEARCHING_WOUNDED
@@ -240,8 +254,7 @@ class MyDroneFirst(DroneAbstract):
                 "rotation": 0.0,
                 "grasper":0}
         return command
-    
-    
+     
     def searching_wounded(self):
         """
         Searching for a wounded person
@@ -260,7 +273,7 @@ class MyDroneFirst(DroneAbstract):
         if self.iter < 50 * self.identifier:
             return self.wall_following()
         
-        if (self.is_path_finish and not self.found_wounded and self.iter > 5 * (self.identifier+1)): #or (self.is_drone_stuck()):
+        if (self.is_path_finish and not self.found_wounded and self.iter > 5 * (self.identifier+1)):
             self.frontiers, n_cluster= self.grid.cluster_boundary_points(self.pose.position)
             if n_cluster == 0 or self.grid.get_visited_ratio() > 0.95 or (self.frontiers is None):
                 return self.wall_following()
@@ -277,12 +290,23 @@ class MyDroneFirst(DroneAbstract):
         """
         Grasping a wounded person
         """
+        current_time = time.time()
         _,_,command = self.process_semantic_sensor()
         command["grasper"] = 1
+
+        #self.pathTracker.handleCollision(command,self.lidar(),self.path)
 
         if self.grasped_entities():
             command["grasper"] = 1
             self.state = self.Activity.SEARCHING_RESCUE_CENTER
+        
+        if (current_time - self.last_wounded_time > self.wounded_cooldown):
+                self.last_wounded_time = current_time
+                self.pathTracker.finish(self.path)
+                self.state = self.Activity.SEARCHING_WOUNDED
+        
+
+        
         return command
     
     def searching_rescue_center(self):
@@ -340,7 +364,6 @@ class MyDroneFirst(DroneAbstract):
 
             return command
     
-
 ##################
 #  BASE FUNCTION #              
 ##################
@@ -563,9 +586,7 @@ class MyDroneFirst(DroneAbstract):
         best_angle = 0
 
         found_wounded = False
-        if (self.state is self.Activity.SEARCHING_WOUNDED
-            or self.state is self.Activity.GRASPING_WOUNDED) \
-                and detection_semantic is not None:
+        if detection_semantic is not None:
             scores = []
             for data in detection_semantic:
                 # If the wounded person detected is held by nobody
@@ -583,7 +604,7 @@ class MyDroneFirst(DroneAbstract):
                 if score[0] < best_score:
                     best_score = score[0]
                     best_angle = score[1]
-
+        
         found_rescue_center = False
         is_near = False
         angles_list = []
@@ -626,27 +647,6 @@ class MyDroneFirst(DroneAbstract):
 
 
         return found_wounded, found_rescue_center, command
-
-    def is_drone_stuck(self,speed = 1000,lidar_values = np.zeros(181),distance_threshold=20, speed_threshold=0.5):
-        """
-        Détermine si le drone est bloqué contre un mur.
-
-        :param self.lidar_values(): Distance mesurée par le LIDAR (en mètres).
-        :param speed: Vitesse actuelle du drone (en m/s).
-        :param position_history: Historique des positions du drone (liste de tuples (x, y)).
-        :param distance_threshold: Seuil de distance pour considérer que le drone est proche d'un mur (en mètres).
-        :param speed_threshold: Seuil de vitesse pour considérer que le drone est immobile (en m/s).
-        :param position_threshold: Seuil de variation de position pour considérer que le drone ne bouge pas (en mètres).
-        :return: True si le drone est bloqué, False sinon.
-        """
-        # 1. Vérifier si le drone est proche d'un mur
-        if min(self.lidar_values()) < distance_threshold:
-            # 2. Vérifier si la vitesse est très faible
-            if np.linalg.norm(self.speed) < speed_threshold:
-                # 3. Vérifier si la position n'a pas changé significativement
-                return True
-        
-        return False
 
 ##################
 #  DRAW FUNCTION #              

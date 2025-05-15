@@ -19,7 +19,7 @@ class Communication:
         self.lidar = None
         self.pose = None
     
-    def update(self,communicator,pose : Pose):
+    def update(self,communicator, pose : Pose):
         self.pose = pose
         self.communicator = communicator
 
@@ -44,7 +44,7 @@ class Communication:
         # Retourne un dictionnaire de frontrière avec un id et la coordonnée de la frontiére à explorer
 
         return {"0":(10,10),"1":None}
-    
+
     def getMessage(self, robot_id):
         if self.communicator is None:
             return None

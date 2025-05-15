@@ -74,6 +74,8 @@ class MyMapIntermediate02(MapAbstract):
             angle = random.uniform(-math.pi, math.pi)
             self._drones_pos.append(((x, y), angle))
 
+        #EFFACER YOUNES
+        #self._drones_pos = [((0,0),0)]
         self._drones: List[DroneAbstract] = []
 
     def construct_playground(self, drone_type: Type[DroneAbstract]) -> Playground:
