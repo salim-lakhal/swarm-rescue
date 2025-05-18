@@ -23,6 +23,47 @@ class Communication:
         self.pose = pose
         self.communicator = communicator
 
+    def getGridFromExplorer(self,grid):
+
+        # Calcul du plus proche voisin
+        if self.communicator is None :
+            return grid
+        
+        msg = self.getMessage(0)
+
+        if msg :
+            _, (sender_id, (other_pos, _),_,_,_,_,grid1) = msg
+            return grid1
+        
+        return grid
+    
+    def getGridFromServer(self,grid):
+
+        # Calcul du plus proche voisin
+        if self.communicator is None :
+            return grid
+        
+        msg = self.getMessage(1)
+
+        if msg :
+            _, (sender_id, (other_pos, _),_,_,_,_,grid1) = msg
+            return grid1
+        
+        return grid
+
+    def getWoundedToRescue(self):
+        # Calcul du plus proche voisin
+        if self.communicator is None :
+            return None
+        
+        msg = self.getMessage(1)
+
+        if msg :
+            _, (sender_id, (other_pos, _),_,_,_,next_wounded_to_rescue,_) = msg
+            return next_wounded_to_rescue
+        
+        return None
+
     
     def findNearestDrone(self):
         # Calcul du plus proche voisin
@@ -33,7 +74,7 @@ class Communication:
         nearest_id = None
         received_messages = self.communicator.received_messages
         for msg in received_messages:
-            _, (sender_id, (other_pos, _)) = msg
+            _, (sender_id, (other_pos, _),_,_,_,_,_) = msg
             dist = ((self.pose.position[0] - other_pos[0]) ** 2 + (self.pose.position[1] - other_pos[1]) ** 2) ** 0.5
             if dist < min_dist and sender_id != self.identifier:
                 min_dist = dist
@@ -50,7 +91,7 @@ class Communication:
             return None
 
         for msg in self.communicator.received_messages:
-            _, (sender_id, (other_pos, _)) = msg
+            _, (sender_id, (other_pos, _),_,_,_,_,_) = msg
             if sender_id == robot_id:
                 _,message = msg
                 return msg  # ou message[1] si tu veux juste la position/orientation

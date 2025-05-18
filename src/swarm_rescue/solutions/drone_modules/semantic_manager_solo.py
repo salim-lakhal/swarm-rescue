@@ -30,9 +30,12 @@ class SemanticManager:
         self.grasped_entities = grasped_entities
         self.communicator = communicator
 
+        self.update_wounded_list()
+
         if not self.grasped_entities:
             self.update_wounded_list()
-        else:
+            
+        else : 
             self.removeWoundedFromList(pos=self.current_grasped_entity_pose)
          
         self.handleCommunication()
@@ -46,7 +49,7 @@ class SemanticManager:
         received_messages = self.communicator.received_messages
 
         for msg in received_messages:
-             _, (sender_id, (other_pos, _),wounded_list_by_other,wounded_saved_by_other,_,_,_) = msg
+             _, (sender_id, (other_pos, _),wounded_list_by_other,wounded_saved_by_other,_,_) = msg
 
             # 1. Supprimer les blessés que l’autre a déjà sauvés
              for saved in wounded_saved_by_other:
@@ -112,7 +115,7 @@ class SemanticManager:
         self.has_just_grasped = False
         #self.current_grasped_entity_pose = None
               
-    def is_in_woundedList(self, new_pos, sigma: float = 25) -> bool:
+    def is_in_woundedList(self, new_pos, sigma: float = 20) -> bool:
         """
         Vérifie si une nouvelle position correspond à un blessé déjà détecté
         en utilisant une distance gaussienne (tolérance par écart-type sigma).
@@ -130,7 +133,7 @@ class SemanticManager:
                 return True  # blessé probablement déjà vu
         return False
     
-    def compute_distance_gaussian(self, pos1, pos2, sigma: float = 25) -> float:
+    def compute_distance_gaussian(self, pos1, pos2, sigma: float = 20) -> float:
         """
         Calcule la probabilité que deux positions correspondent au même blessé
         selon un modèle de distribution gaussienne.
@@ -161,7 +164,7 @@ class SemanticManager:
     def removeCurrentWoundedFromList(self):
         self.removeWoundedFromList(pos=self.get_wounded_grasped_position())
     
-    def removeWoundedFromList(self, pos, sigma: float = 25):
+    def removeWoundedFromList(self, pos, sigma: float = 20):
         """
         Supprime un blessé de la liste s'il est suffisamment proche (même logique que is_in_woundedList).
         """
@@ -190,7 +193,7 @@ class SemanticManager:
                 break  # On en retire un seul à la fois
     
 
-    def is_in_saveWoundedList(self, new_pos, sigma: float = 25) -> bool:
+    def is_in_saveWoundedList(self, new_pos, sigma: float = 20) -> bool:
         """
         Vérifie si une nouvelle position correspond à un blessé déjà détecté
         en utilisant une distance gaussienne (tolérance par écart-type sigma).
