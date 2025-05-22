@@ -176,12 +176,13 @@ class MyDroneFirst(DroneAbstract):
 
         self.communication.update(self.communicator, self.pose)
 
-        
-        self.semanticManager.update(semantic_values=self.semantic_values(),list_wounded=self.list_wounded,grasped_entities=self.grasped_entities(),communicator = self.communicator, pose=self.pose)
-        self.list_wounded = self.semanticManager.getWoundedList()
-        self.list_wounded_save = self.semanticManager.getWoundedSaveList()
+        if self.role == self.Role.LEADER or self.role == self.Role.EXPLORER :
+            self.semanticManager.update(semantic_values=self.semantic_values(),list_wounded=self.list_wounded,grasped_entities=self.grasped_entities(),communicator = self.communicator, pose=self.pose)
+            self.list_wounded = self.semanticManager.getWoundedList()
+            self.list_wounded_save = self.semanticManager.getWoundedSaveList()
 
-        #print(f"{self.identifier} ID : {len(self.list_wounded)}")
+
+        print(f"{self.identifier} ID : {len(self.list_wounded)}")
 
 
         if self.is_path_finish:
@@ -217,11 +218,15 @@ class MyDroneFirst(DroneAbstract):
         """
         self.pose_initial.position = self.pose.position
 
-        self.state = self.Activity.SEARCHING_WOUNDED
-        self.role = self.Role.EXPLORER
+        self.state = self.Activity.SLEEP
+        self.role = self.Role.SHEEP
 
         if self.identifier == 0:
             self.state = self.Activity.SERVER
+            self.role = self.Role.LEADER
+        elif self.identifier == 1:
+            self.state = self.Activity.SEARCHING_WOUNDED
+            self.role = self.Role.EXPLORER
         
         #goal = [-100, 118,0]
         #self.path_planning([(goal[0] + self.size_area[0]/2)/20,(goal[1] +self.size_area[1]/2)/20])
@@ -248,6 +253,7 @@ class MyDroneFirst(DroneAbstract):
         # Passe à l'état execute dés qu'il reçoit un signal et la position du wounded à chercher
 
 
+        
 
         return {"forward": 0.0,
                 "lateral": 0.0,
