@@ -26,6 +26,7 @@ from spg_overlay.utils.path import Path
 from spg_overlay.utils.pose import Pose
 from spg_overlay.entities.keyboard_controller import KeyboardController
 from statemachine import StateMachine, State
+from analyse.data_management import DataManager
 from drone_modules.slam_module import SLAMModule
 from drone_modules.exploration_grid import ExplorationGrid
 from drone_modules.communication import Communication
@@ -70,6 +71,7 @@ class MyDroneFirst(DroneAbstract):
         self.pathTracker = PathTracker()
         self.communication = Communication(identifier)
         self.semanticManager = SemanticManager(identifier)
+        self.dataManager = DataManager()
 
 
         # Variable drone
@@ -140,12 +142,12 @@ class MyDroneFirst(DroneAbstract):
         
         self.update()
 
-
+        
         command = self.states[self.state]()
 
         #print(self.communicator._received_messages)
         #print(str(self.identifier) + " : " + str(self.state))
-        #print("Nombre blessé détecté " + str(self.identifier) +":"+ str(len(self.list_wounded)))
+        #print(str(self.identifier) + "Nombre blessé détecté :"+ str(len(self.list_wounded)))
         #print("List Grasped :"+ str(self.identifier) +":"+str(self.list_wounded))
         #print("Save Grasped :"+ str(self.identifier) +":"+str(self.list_wounded_save))"""
 
@@ -159,9 +161,13 @@ class MyDroneFirst(DroneAbstract):
         self.timer.restart()  # Redémarrage pour le prochain cycle
         self.iter += 1
 
-        self.pose.position = self.true_position()
-        self.pose.orientation = self.true_angle()
+        self.pose.position = self.measured_gps_position()
+        self.pose.orientation = self.measured_compass_angle()
         self.speed = self.measured_velocity()
+
+        #self.dataManager.update(true_position=self.true_position(),measured_position=self.measured_gps_position(),true_velocity=self.true_velocity(),measured_velocity=self.measured_velocity())
+
+
 
         _,self.collision = self.pathTracker.process_lidar_sensor(self.lidar())
         self.found_drone,_ = self.process_communication_sensor()
@@ -174,6 +180,8 @@ class MyDroneFirst(DroneAbstract):
         self.semanticManager.update(semantic_values=self.semantic_values(),list_wounded=self.list_wounded,grasped_entities=self.grasped_entities(),communicator = self.communicator, pose=self.pose)
         self.list_wounded = self.semanticManager.getWoundedList()
         self.list_wounded_save = self.semanticManager.getWoundedSaveList()
+
+        #print(f"{self.identifier} ID : {len(self.list_wounded)}")
 
 
         if self.is_path_finish:
@@ -211,7 +219,6 @@ class MyDroneFirst(DroneAbstract):
 
         self.state = self.Activity.SEARCHING_WOUNDED
         self.role = self.Role.EXPLORER
-
         
         #goal = [-100, 118,0]
         #self.path_planning([(goal[0] + self.size_area[0]/2)/20,(goal[1] +self.size_area[1]/2)/20])
@@ -259,6 +266,7 @@ class MyDroneFirst(DroneAbstract):
             return command
 
         if self.found_wounded:
+            self.list_wounded.remove(self.next_wounded_to_visit)
             self.path.reset()
             command["grasper"] = 1
             self.state = self.Activity.GRASPING_WOUNDED
